@@ -195,6 +195,76 @@ class Tier1Transformer(ast.NodeTransformer):
         )
 
 
+class Tier3Transformer(ast.NodeTransformer):
+    """AST Transformer that isolates a target symbol with its full implementation body,
+    stubbing non-target sibling methods within the same class with `...`."""
+
+    def __init__(self, target_symbol: str) -> None:
+        super().__init__()
+        self.target_symbol = target_symbol
+        self.target_base = target_symbol.split(".")[-1]
+
+    def _stub_body(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.stmt]:
+        """Produce a stubbed body containing only the docstring (if present) and Ellipsis."""
+        docstring = ast.get_docstring(node)
+        new_body: list[ast.stmt] = []
+
+        if docstring:
+            new_body.append(ast.Expr(value=ast.Constant(value=docstring)))
+
+        new_body.append(ast.Expr(value=ast.Constant(value=Ellipsis)))
+        return new_body
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST | None:
+        # If the class itself is the target symbol, retain all methods with full bodies
+        if node.name == self.target_symbol or node.name == self.target_base:
+            return node
+
+        docstring = ast.get_docstring(node)
+        retained_body: list[ast.stmt] = []
+
+        if docstring:
+            retained_body.append(ast.Expr(value=ast.Constant(value=docstring)))
+
+        for stmt in node.body:
+            if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str) and stmt.value.value == docstring:
+                continue
+
+            if isinstance(stmt, (ast.AnnAssign, ast.Assign)):
+                retained_body.append(stmt)
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if stmt.name == self.target_base:
+                    # Target method inside class retains its full implementation body
+                    retained_body.append(stmt)
+                else:
+                    # Sibling methods are stubbed with ...
+                    stubbed = ast.copy_location(
+                        type(stmt)(
+                            name=stmt.name,
+                            args=stmt.args,
+                            body=self._stub_body(stmt),
+                            decorator_list=stmt.decorator_list,
+                            returns=stmt.returns,
+                            type_comment=getattr(stmt, "type_comment", None),
+                        ),
+                        stmt,
+                    )
+                    retained_body.append(stubbed)
+            elif isinstance(stmt, ast.ClassDef):
+                retained_body.append(stmt)
+
+        return ast.copy_location(
+            ast.ClassDef(
+                name=node.name,
+                bases=node.bases,
+                keywords=node.keywords,
+                body=retained_body,
+                decorator_list=node.decorator_list,
+            ),
+            node,
+        )
+
+
 class ASTParser:
     """Parses Python source code and generates structural context slices."""
 
@@ -447,3 +517,50 @@ class ASTParser:
         lines.append(self.get_tier1_context(symbol_name=target_info.name))
 
         return "\n".join(lines)
+
+    def get_tier3_context(self, symbol_name: str | None = None) -> str:
+        """Generate Tier 3 context: Full implementation body.
+
+        Exports uncompressed source code for the requested symbol (and its immediate block)
+        or the entire module if symbol_name is None.
+        """
+        import copy
+
+        if symbol_name is None:
+            # Full module uncompressed source code
+            return ast.unparse(self.tree)
+
+        target_info = self.get_symbol_info(symbol_name)
+        if not target_info:
+            return self.get_tier3_context(symbol_name=None)
+
+        tree_copy = copy.deepcopy(self.tree)
+        transformer = Tier3Transformer(target_symbol=target_info.name)
+
+        isolated_body: list[ast.stmt] = []
+
+        # Preserve top-level module docstring if present
+        docstring = ast.get_docstring(tree_copy)
+        if docstring:
+            isolated_body.append(ast.Expr(value=ast.Constant(value=docstring)))
+
+        # Preserve top-level imports and type aliases
+        for stmt in tree_copy.body:
+            if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+                isolated_body.append(stmt)
+            elif hasattr(ast, "TypeAlias") and isinstance(stmt, getattr(ast, "TypeAlias")):
+                isolated_body.append(stmt)
+
+        # Isolate target symbol and its immediate enclosing block
+        for stmt in tree_copy.body:
+            if isinstance(stmt, ast.ClassDef):
+                if stmt.name == target_info.name or stmt.name == target_info.parent_class:
+                    transformed = transformer.visit(stmt)
+                    if transformed is not None:
+                        isolated_body.append(transformed)  # type: ignore
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if stmt.name == target_info.name:
+                    isolated_body.append(stmt)
+
+        tree_copy.body = isolated_body
+        return ast.unparse(tree_copy)
