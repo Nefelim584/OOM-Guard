@@ -10,11 +10,11 @@
 
 ## Phase 2: Call-Graph Slicing & AST Metrics (Tier 2 Compression)
 *Feature: Call-graph analysis, caller/callee tracing, cyclomatic complexity, and Tier 2 skeleton slice generation.*
-- [ ] Step 2.1: Implement AST visitor to trace in-degree (callers), callees, and raised exceptions for a target symbol.
-- [ ] Step 2.2: Implement cyclomatic complexity ($CC$) calculator in `src/acc_mcp/parser.py`.
-- [ ] Step 2.3: Implement Tier 2 skeleton slice generator combining Tier 1 interface with callers, callees, and exceptions.
-- [ ] Step 2.4: Write unit tests in `tests/test_parser_tier2.py` verifying Tier 2 slices, in-degree counts, and cyclomatic complexity.
-- [ ] Step 2.5: Run test suite, verify Tier 2 functionality passes, and suggest commit name: `feat(parser): add call-graph slicing, complexity metrics, and Tier 2 context`.
+- [x] Step 2.1: Implement AST visitor to trace in-degree (callers), callees, and raised exceptions for a target symbol.
+- [x] Step 2.2: Implement cyclomatic complexity ($CC$) calculator in `src/acc_mcp/parser.py`.
+- [x] Step 2.3: Implement Tier 2 skeleton slice generator combining Tier 1 interface with callers, callees, and exceptions.
+- [x] Step 2.4: Write unit tests in `tests/test_parser_tier2.py` verifying Tier 2 slices, in-degree counts, and cyclomatic complexity.
+- [x] Step 2.5: Run test suite, verify Tier 2 functionality passes, and suggest commit name: `feat(parser): add call-graph slicing, complexity metrics, and Tier 2 context`.
 
 ## Phase 3: Full Body Extraction & Deterministic Guardrails (Block 3)
 *Feature: Tier 3 context extraction with hard security path checks and deterministic AST token ceiling enforcement.*
