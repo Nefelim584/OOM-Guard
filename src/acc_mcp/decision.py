@@ -49,63 +49,74 @@ class DecisionResult:
     reasoning: str
 
 
+def _words(*forms: str) -> str:
+    """Regex matching exactly one of the given word forms, so `add` does not match `address`."""
+    return r"\b(?:" + "|".join(forms) + r")\b"
+
+
 class TaskIntentClassifier:
     """Classifies developer task intent into task depth x_1 in {0, 1, 2}."""
 
     # Level 2: Full algorithmic rewrite, debugging deep logic, optimization, fixing implementations
     # Focuses on operation verbs requiring the function body, avoiding subject nouns like 'error' or 'bug'
     DEPTH_2_PATTERNS = [
-        r"\bfix\w*",
-        r"\bdebug\w*",
-        r"\brewrit\w*",
-        r"\breimplement\w*",
-        r"\boptimi\w*",
-        r"\bimplement\w*",
-        r"\boverhaul\w*",
+        _words("fix", "fixes", "fixed", "fixing"),
+        _words("debug", "debugs", "debugged", "debugging"),
+        _words("rewrite", "rewrites", "rewrote", "rewritten", "rewriting"),
+        _words("reimplement", "reimplements", "reimplemented", "reimplementing", "reimplementation"),
+        _words(
+            "optimize", "optimizes", "optimized", "optimizing", "optimization",
+            "optimise", "optimises", "optimised", "optimising", "optimisation",
+        ),
+        _words("implement", "implements", "implemented", "implementing", "implementation", "implementations"),
+        _words("overhaul", "overhauls", "overhauled", "overhauling"),
     ]
 
     # Level 1: Refactoring, patching, call-graph analysis, caller/callee tracing, modifying signatures
     DEPTH_1_PATTERNS = [
-        r"\brefactor\w*",
-        r"\brenam\w*",
-        r"\bpatch\w*",
-        r"\bdeprecat\w*",
-        r"\btrac\w*",
-        r"\bcaller\w*",
-        r"\bcallee\w*",
-        r"\bcall\s*site\w*",
-        r"\bcall\s+graph\w*",
-        r"\bdepend\w*",
-        r"\bwrapper\w*",
-        r"\bwire\w*",
-        r"\bmigrat\w*",
-        r"\bmodif\w*",
-        r"\bchang\w*",
-        r"\bextend\w*",
-        r"\badd\w*",
+        _words("refactor", "refactors", "refactored", "refactoring"),
+        _words("rename", "renames", "renamed", "renaming"),
+        _words("patch", "patches", "patched", "patching"),
+        _words("deprecate", "deprecates", "deprecated", "deprecating", "deprecation"),
+        _words("trace", "traces", "traced", "tracing"),
+        _words("caller", "callers", "callee", "callees"),
+        r"\bcall\s*sites?\b",
+        r"\bcall\s+graphs?\b",
+        _words(
+            "depend", "depends", "depended", "depending",
+            "dependency", "dependencies", "dependent", "dependents",
+        ),
+        _words("wrapper", "wrappers"),
+        _words("wire", "wires", "wired", "wiring"),
+        _words("migrate", "migrates", "migrated", "migrating", "migration", "migrations"),
+        _words("modify", "modifies", "modified", "modifying", "modification", "modifications"),
+        _words("change", "changes", "changed", "changing"),
+        _words("extend", "extends", "extended", "extending"),
+        _words("add", "adds", "added", "adding"),
     ]
 
     # Level 0: Pure inspection, verification, checking signatures, docstrings, type hints
     DEPTH_0_PATTERNS = [
-        r"\binspect\w*",
-        r"\bcheck\w*",
-        r"\bview\w*",
-        r"\bshow\w*",
+        _words("inspect", "inspects", "inspected", "inspecting", "inspection"),
+        _words("check", "checks", "checked", "checking"),
+        _words("view", "views", "viewed", "viewing"),
+        _words("show", "shows", "showed", "shown", "showing"),
         r"\blook\s+at\b",
-        r"\bfind\w*",
+        _words("find", "finds", "finding"),
         r"\bwhat\s+is\b",
         r"\bhow\s+to\s+call\b",
         r"\bhow\s+to\s+use\b",
         r"\bcall(?:s|ing)?(?!\s*(?:site|graph))\b",
-        r"\binvok\w*",
-        r"\busage\w*",
-        r"\bsignature\w*",
-        r"\btype\w*",
-        r"\bdocstring\w*",
-        r"\bargument\w*",
-        r"\bparameter\w*",
-        r"\binterface\w*",
-        r"\blist\w*",
+        _words("invoke", "invokes", "invoked", "invoking"),
+        _words("usage", "usages"),
+        _words("signature", "signatures"),
+        _words("type", "types"),
+        _words("docstring", "docstrings"),
+        _words("argument", "arguments"),
+        _words("parameter", "parameters"),
+        _words("interface", "interfaces"),
+        # `list[int]` is a type annotation, not a request to list something
+        _words("list", "lists", "listed", "listing") + r"(?!\s*\[)",
     ]
 
     def __init__(self) -> None:

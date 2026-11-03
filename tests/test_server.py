@@ -395,6 +395,29 @@ async def test_min_tier_ledger_records_escalation_metadata(sample_source_file: P
 
 
 @pytest.mark.asyncio
+async def test_token_ledger_reports_escalation_rate(sample_source_file: Path, temp_ledger: Path):
+    """Verify get_token_ledger reports how often the agent had to raise min_tier."""
+    server = create_server(ledger_path=temp_ledger)
+    base = {"file_path": str(sample_source_file), "symbol_name": "calculate_hash"}
+
+    empty = json.loads((await server.call_tool("get_token_ledger", {})).content[0].text)
+    assert empty["summary"]["escalation_rate"] == 0.0
+
+    await server.call_tool("get_adaptive_context", {**base, "task_intent": "Check calculate_hash signature"})
+    await server.call_tool(
+        "get_adaptive_context", {**base, "task_intent": "Check calculate_hash signature", "min_tier": 3}
+    )
+    await server.call_tool(
+        "get_adaptive_context", {**base, "task_intent": "Rewrite calculate_hash", "min_tier": 1}
+    )
+
+    summary = json.loads((await server.call_tool("get_token_ledger", {})).content[0].text)["summary"]
+    assert summary["total_requests"] == 3
+    assert summary["escalations"] == 1
+    assert summary["escalation_rate"] == 0.3333
+
+
+@pytest.mark.asyncio
 async def test_min_tier_none_behaves_as_before(sample_source_file: Path, temp_ledger: Path):
     """Verify that omitting min_tier preserves original behavior and records None in ledger."""
     server = create_server(ledger_path=temp_ledger)

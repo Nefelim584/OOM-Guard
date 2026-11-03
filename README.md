@@ -43,7 +43,7 @@ This creates two critical points of failure:
 │                                                                        │
 │  2. Decision Model (Block 4 - src/acc_mcp/decision.py)                 │
 │     Extracts query & AST features -> computes P(Full Context Needed).  │
-│     Selects Tier 1, 2, or 3 based on calibrated thresholds (θ).        │
+│     Selects Tier 1, 2, or 3 based on hand-picked thresholds (θ).       │
 │                                                                        │
 │  3. Hard Code Guardrail (Block 3 - src/acc_mcp/guard.py)               │
 │     - Protected Path Rule: Rejects .env, .git, credentials, alembic.   │
@@ -127,14 +127,17 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 - **Logistic Scoring Function:**
   $$z = w_0 + w_1 x_1 + w_2 x_2 + w_3 x_3 - w_4 x_4$$
   $$P(\text{Full}) = \frac{1}{1 + e^{-z}}$$
-  *Calibrated weights:* $w_0 = -2.0, w_1 = 2.0, w_2 = 0.2, w_3 = 0.3, w_4 = 1.0$.
-- **Decision Policy Thresholds:** $\theta_{\text{low}} = 0.30, \theta_{\text{high}} = 0.65$.
-- **Formal Evaluation Across 20 Distinct Tasks:** Evaluated against [`data/decision_dataset.json`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/data/decision_dataset.json) (10 interface-only tasks, 10 deep logic rewrite tasks):
-  - **Accuracy:** **100.00%** (20/20 tasks correct)
-  - **Miss Rate (Type II error):** **0.00%** ($FN = 0$) — zero scenarios where the model failed to provide full context when required for an algorithmic rewrite.
-  - **False Alarm Rate (Type I error):** **0.00%** ($FP = 0$) — zero token bloat on interface queries.
-  - **Confusion Matrix:**
-    $$\begin{pmatrix} TN = 10 & FP = 0 \\ FN = 0 & TP = 10 \end{pmatrix}$$
+  *Hand-picked weights:* $w_0 = -2.0, w_1 = 2.0, w_2 = 0.2, w_3 = 0.3, w_4 = 1.0$.
+- **Decision Policy Thresholds:** $\theta_{\text{low}} = 0.30, \theta_{\text{high}} = 0.65$ (also hand-picked).
+- **Intent Classifier:** $x_1$ is set by counting keyword hits per depth. Keywords match whole word forms only (`add`, `adds`, `added`, `adding` but not `address`; `type`/`types` but not `typed`; `list` but not the annotation `list[int]`). A query with no keyword hit falls back to $x_1 = 1$.
+- **What really decides the tier:** with these weights the tier is decided almost only by the verb in `task_intent`. Since $x_2 \ge 1$, $x_3 \ge 0$, $x_4 \le 1$:
+  - $x_1 = 2$ gives $z \ge 1.2$, $P \ge 0.77$: **always Tier 3**.
+  - $x_1 = 1$ gives $z \ge -0.8$, $P \ge 0.31$: **never Tier 1**. The AST features only choose between Tier 2 and Tier 3.
+  - $x_1 = 0$ is the only case where the AST features can move the tier, and only for unusually complex or heavily called symbols.
+- **Evaluation on 20 Tasks:** [`data/decision_dataset.json`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/data/decision_dataset.json) has 5 Tier 1, 5 Tier 2, and 10 Tier 3 tasks. Run `python3 src/acc_mcp/evaluate_decision.py` for the 3x3 tier confusion matrix (actual vs predicted tier), per-tier precision and recall, the miss rate (served a lower tier than needed), and the false alarm rate (served a higher tier than needed).
+  - All 20 tasks currently land on their ground-truth tier.
+  - **This is not a measurement on unseen data:** the weights and thresholds were picked by hand while looking at these same 20 tasks, and each tier's tasks use the verbs the classifier looks for. A fitted model with a held-out split is planned in Phase 21.
+  - The real-world signal is `escalation_rate` in `get_token_ledger`: the share of requests where the agent had to raise `min_tier` above the model's choice because the slice it got was not enough.
 
 ### Block 5: Memory or Context Budget Management (`src/acc_mcp/budget.py`)
 - **Implementation:** An active context budget manager persisting state across agent runs.

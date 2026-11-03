@@ -315,6 +315,35 @@ def test_history_cap_keeps_correct_totals(temp_ledger_path: Path):
         assert restarted.get_summary()[key] == value
 
 
+def test_escalation_rate_counts_min_tier_raises_across_history_cap(temp_ledger_path: Path):
+    """Verify escalation_rate counts only min_tier above the model's tier and survives the cap and a restart."""
+    tracker = ContextBudgetTracker(ledger_path=temp_ledger_path, history_limit=2)
+    cases = [
+        (1, None, 1),  # model's choice, no min_tier
+        (1, 3, 3),  # escalated: agent asked for more than the model gave
+        (3, 1, 3),  # min_tier below the model's choice is not an escalation
+        (2, 2, 2),  # min_tier equal to the model's choice is not an escalation
+    ]
+    for model_tier, min_tier, served_tier in cases:
+        tracker.record_retrieval(
+            file_path="src/service.py",
+            task_intent="Inspect signature",
+            served_tier=served_tier,
+            baseline_content="def f(x):\n    return x\n" * 10,
+            served_content="def f(x): ...\n",
+            requested_min_tier=min_tier,
+            model_tier=model_tier,
+        )
+
+    assert [r.was_escalated for r in tracker.history] == [False, False]
+    assert tracker.total_escalations == 1
+    assert tracker.get_summary()["escalation_rate"] == 0.25
+
+    restarted = ContextBudgetTracker(ledger_path=temp_ledger_path, history_limit=2)
+    assert restarted.get_summary()["escalations"] == 1
+    assert restarted.get_summary()["escalation_rate"] == 0.25
+
+
 def test_ledger_without_totals_is_recounted_from_history(temp_ledger_path: Path):
     """Verify a ledger written before totals were stored still loads with correct totals."""
     records = record_n(ContextBudgetTracker(ledger_path=temp_ledger_path), 4)

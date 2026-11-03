@@ -17,27 +17,45 @@ from acc_mcp.decision import DecisionModel, DecisionResult
 from acc_mcp.parser import ASTParser
 
 
+TIERS = (1, 2, 3)
+
+
 @dataclass
 class EvaluationMetrics:
-    """Evaluation metrics for the Decision Model."""
+    """Evaluation metrics for the Decision Model, read off the 3x3 tier confusion matrix.
+
+    A miss is a predicted tier below the ground-truth tier (the agent gets too little
+    context); a false alarm is a predicted tier above it (tokens are wasted). The miss rate
+    is taken over tasks that can be missed (true tier 2 or 3), the false alarm rate over
+    tasks that can be over-served (true tier 1 or 2).
+    """
 
     total_samples: int
-    tp: int
-    tn: int
-    fp: int
-    fn: int
     accuracy: float
-    precision: float
-    recall: float
-    false_alarm_rate: float
+    misses: int
+    false_alarms: int
     miss_rate: float
-    tier_accuracy: float
-    confusion_matrix_2x2: dict[str, int]
+    false_alarm_rate: float
+    # tier -> {"precision": float, "recall": float, "support": int}
+    per_tier: dict[int, dict[str, float]]
+    # tier_confusion_matrix[actual_tier][predicted_tier]
     tier_confusion_matrix: dict[int, dict[int, int]]
     task_evaluations: list[dict[str, Any]]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _ratio(numerator: int, denominator: int) -> float:
+    return numerator / denominator if denominator > 0 else 0.0
+
+
+def _verdict(actual: int, predicted: int) -> str:
+    if predicted < actual:
+        return f"Miss (needed Tier {actual})"
+    if predicted > actual:
+        return f"False Alarm (Tier {actual} sufficed)"
+    return "Correct"
 
 
 class DecisionEvaluator:
@@ -70,19 +88,7 @@ class DecisionEvaluator:
         """Run evaluation over dataset tasks and compute performance metrics."""
         tasks = dataset if dataset is not None else self.load_dataset()
 
-        tp = 0
-        tn = 0
-        fp = 0
-        fn = 0
-        tier_matches = 0
-
-        # Tier confusion matrix: tier_cm[actual_tier][predicted_tier]
-        tier_cm: dict[int, dict[int, int]] = {
-            1: {1: 0, 2: 0, 3: 0},
-            2: {1: 0, 2: 0, 3: 0},
-            3: {1: 0, 2: 0, 3: 0},
-        }
-
+        tier_cm: dict[int, dict[int, int]] = {a: {p: 0 for p in TIERS} for a in TIERS}
         evaluations: list[dict[str, Any]] = []
 
         for task in tasks:
@@ -90,8 +96,11 @@ class DecisionEvaluator:
             intent = task["task_intent"]
             target_symbol = task.get("target_symbol")
             code_snippet = task.get("code_snippet", "")
-            requires_full_body = bool(task["requires_full_body"])
-            ground_truth_tier = int(task.get("ground_truth_tier", 3 if requires_full_body else 1))
+            ground_truth_tier = int(
+                task.get("ground_truth_tier", 3 if task.get("requires_full_body") else 1)
+            )
+            if ground_truth_tier not in TIERS:
+                raise ValueError(f"Task {task_id} has invalid ground_truth_tier {ground_truth_tier}")
 
             # Parse snippet to extract AST metrics
             parser = ASTParser(code_snippet, file_path=f"synthetic_{task_id}.py")
@@ -101,28 +110,7 @@ class DecisionEvaluator:
                 symbol_name=target_symbol,
             )
 
-            predicted_full_body = decision.tier == 3
-
-            # 2x2 Binary Classification (Full Body vs Interface)
-            if requires_full_body and predicted_full_body:
-                tp += 1
-                classification = "TP"
-            elif not requires_full_body and not predicted_full_body:
-                tn += 1
-                classification = "TN"
-            elif not requires_full_body and predicted_full_body:
-                fp += 1
-                classification = "FP (False Alarm)"
-            else:
-                fn += 1
-                classification = "FN (Critical Miss)"
-
-            # 3-Tier Multi-class Match
-            if decision.tier == ground_truth_tier:
-                tier_matches += 1
-
-            if ground_truth_tier in tier_cm and decision.tier in tier_cm[ground_truth_tier]:
-                tier_cm[ground_truth_tier][decision.tier] += 1
+            tier_cm[ground_truth_tier][decision.tier] += 1
 
             evaluations.append(
                 {
@@ -134,65 +122,73 @@ class DecisionEvaluator:
                     "probability": round(decision.probability, 4),
                     "logit": round(decision.logit, 4),
                     "features": decision.features.to_dict(),
-                    "classification": classification,
+                    "classification": _verdict(ground_truth_tier, decision.tier),
                     "correct_tier": decision.tier == ground_truth_tier,
                 }
             )
 
         total = len(tasks)
-        accuracy = (tp + tn) / total if total > 0 else 0.0
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        false_alarm_rate = fp / (fp + tn) if (fp + tn) > 0 else 0.0
-        miss_rate = fn / (fn + tp) if (fn + tp) > 0 else 0.0
-        tier_accuracy = tier_matches / total if total > 0 else 0.0
+        correct = sum(tier_cm[t][t] for t in TIERS)
+        misses = sum(tier_cm[a][p] for a in TIERS for p in TIERS if p < a)
+        false_alarms = sum(tier_cm[a][p] for a in TIERS for p in TIERS if p > a)
+        can_miss = sum(sum(tier_cm[a].values()) for a in TIERS if a > 1)
+        can_over_serve = sum(sum(tier_cm[a].values()) for a in TIERS if a < 3)
+
+        per_tier: dict[int, dict[str, float]] = {}
+        for t in TIERS:
+            support = sum(tier_cm[t].values())
+            predicted = sum(tier_cm[a][t] for a in TIERS)
+            per_tier[t] = {
+                "precision": _ratio(tier_cm[t][t], predicted),
+                "recall": _ratio(tier_cm[t][t], support),
+                "support": support,
+            }
 
         return EvaluationMetrics(
             total_samples=total,
-            tp=tp,
-            tn=tn,
-            fp=fp,
-            fn=fn,
-            accuracy=accuracy,
-            precision=precision,
-            recall=recall,
-            false_alarm_rate=false_alarm_rate,
-            miss_rate=miss_rate,
-            tier_accuracy=tier_accuracy,
-            confusion_matrix_2x2={"TP": tp, "TN": tn, "FP": fp, "FN": fn},
+            accuracy=_ratio(correct, total),
+            misses=misses,
+            false_alarms=false_alarms,
+            miss_rate=_ratio(misses, can_miss),
+            false_alarm_rate=_ratio(false_alarms, can_over_serve),
+            per_tier=per_tier,
             tier_confusion_matrix=tier_cm,
             task_evaluations=evaluations,
         )
 
     def generate_markdown_report(self, metrics: EvaluationMetrics) -> str:
         """Format metrics into a comprehensive Markdown evaluation report."""
-        cm = metrics.confusion_matrix_2x2
         tcm = metrics.tier_confusion_matrix
 
         lines = [
             "# Decision Model Benchmark Evaluation Report (Block 4)",
             "",
+            "> The weights and thresholds were picked by hand on these same tasks, so these",
+            "> numbers are not a measurement on unseen data.",
+            "",
             "## Summary Performance Metrics",
             f"- **Total Benchmark Tasks:** {metrics.total_samples}",
-            f"- **Accuracy (Full vs Interface):** {metrics.accuracy * 100:.2f}%",
-            f"- **Tier Selection Accuracy (1/2/3):** {metrics.tier_accuracy * 100:.2f}%",
-            f"- **Precision:** {metrics.precision * 100:.2f}%",
-            f"- **Recall:** {metrics.recall * 100:.2f}%",
-            f"- **False Alarm Rate (Type I Error):** {metrics.false_alarm_rate * 100:.2f}% (Tokens wasted when signatures sufficed)",
-            f"- **Miss Rate (Type II Error):** {metrics.miss_rate * 100:.2f}% (Critical misses where agent lacked required logic)",
+            f"- **Tier Accuracy (1/2/3):** {metrics.accuracy * 100:.2f}%",
+            f"- **Miss Rate:** {metrics.miss_rate * 100:.2f}% ({metrics.misses} tasks served a lower tier than needed)",
+            f"- **False Alarm Rate:** {metrics.false_alarm_rate * 100:.2f}% ({metrics.false_alarms} tasks served a higher tier than needed)",
             "",
-            "## 2x2 Binary Confusion Matrix (Tier 3 vs Tiers 1 & 2)",
-            "| | Predicted Interface (Tier 1/2) | Predicted Full Body (Tier 3) |",
-            "| :--- | :---: | :---: |",
-            f"| **Actual Interface** | **TN = {cm['TN']}** | **FP = {cm['FP']}** |",
-            f"| **Actual Full Body** | **FN = {cm['FN']}** | **TP = {cm['TP']}** |",
-            "",
-            "## 3x3 Tier Selection Matrix",
+            "## 3x3 Tier Confusion Matrix",
             "| Actual \\ Predicted | Predicted Tier 1 | Predicted Tier 2 | Predicted Tier 3 |",
             "| :--- | :---: | :---: | :---: |",
-            f"| **Actual Tier 1** | {tcm[1][1]} | {tcm[1][2]} | {tcm[1][3]} |",
-            f"| **Actual Tier 2** | {tcm[2][1]} | {tcm[2][2]} | {tcm[2][3]} |",
-            f"| **Actual Tier 3** | {tcm[3][1]} | {tcm[3][2]} | {tcm[3][3]} |",
+            *(
+                f"| **Actual Tier {a}** | {tcm[a][1]} | {tcm[a][2]} | {tcm[a][3]} |"
+                for a in TIERS
+            ),
+            "",
+            "Cells below the diagonal are misses, cells above it are false alarms.",
+            "",
+            "## Per-Tier Precision and Recall",
+            "| Tier | Precision | Recall | Support |",
+            "| :--- | :---: | :---: | :---: |",
+            *(
+                f"| Tier {t} | {m['precision'] * 100:.2f}% | {m['recall'] * 100:.2f}% | {m['support']} |"
+                for t, m in metrics.per_tier.items()
+            ),
             "",
             "## Benchmark Task Breakdown",
             "| Task ID | Intent | True Tier | Pred Tier | P(Full) | Verdict |",

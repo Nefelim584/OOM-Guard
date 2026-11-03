@@ -80,33 +80,44 @@ def test_dataset_task_schema_and_code_syntax(dataset: list[dict]):
 
 
 def test_evaluation_metrics_arithmetic(evaluator: DecisionEvaluator, dataset: list[dict]):
-    """Verify confusion matrix counts and rate formulas obey mathematical identities."""
+    """Verify the 3x3 matrix sums to the dataset and every metric is read off it correctly."""
     metrics = evaluator.evaluate(dataset)
-
-    # Total sample balance
-    assert metrics.total_samples == len(dataset)
-    assert metrics.total_samples == metrics.tp + metrics.tn + metrics.fp + metrics.fn
-
-    # Confusion matrix structure
-    assert metrics.confusion_matrix_2x2 == {
-        "TP": metrics.tp,
-        "TN": metrics.tn,
-        "FP": metrics.fp,
-        "FN": metrics.fn,
-    }
-
-    # Rates bounded in [0.0, 1.0]
-    assert 0.0 <= metrics.accuracy <= 1.0
-    assert 0.0 <= metrics.precision <= 1.0
-    assert 0.0 <= metrics.recall <= 1.0
-    assert 0.0 <= metrics.false_alarm_rate <= 1.0
-    assert 0.0 <= metrics.miss_rate <= 1.0
-    assert 0.0 <= metrics.tier_accuracy <= 1.0
-
-    # 3x3 Tier Matrix sums match total
     tcm = metrics.tier_confusion_matrix
-    tier_total = sum(tcm[r][c] for r in (1, 2, 3) for c in (1, 2, 3))
-    assert tier_total == metrics.total_samples
+    tiers = (1, 2, 3)
+
+    assert metrics.total_samples == len(dataset)
+    assert sum(tcm[a][p] for a in tiers for p in tiers) == metrics.total_samples
+
+    diagonal = sum(tcm[t][t] for t in tiers)
+    assert metrics.misses == sum(tcm[a][p] for a in tiers for p in tiers if p < a)
+    assert metrics.false_alarms == sum(tcm[a][p] for a in tiers for p in tiers if p > a)
+    assert diagonal + metrics.misses + metrics.false_alarms == metrics.total_samples
+    assert metrics.accuracy == diagonal / metrics.total_samples
+
+    for t in tiers:
+        assert metrics.per_tier[t]["support"] == sum(1 for task in dataset if task["ground_truth_tier"] == t)
+        assert 0.0 <= metrics.per_tier[t]["precision"] <= 1.0
+        assert 0.0 <= metrics.per_tier[t]["recall"] <= 1.0
+
+    assert 0.0 <= metrics.miss_rate <= 1.0
+    assert 0.0 <= metrics.false_alarm_rate <= 1.0
+
+
+def test_tier1_tier2_confusion_is_measured(evaluator: DecisionEvaluator, dataset: list[dict]):
+    """Verify serving Tier 2 for a Tier 1 task counts as a false alarm and the reverse as a miss.
+
+    The old binary matrix lumped Tiers 1 and 2 together, so neither mistake was counted.
+    """
+    task = next(t for t in dataset if t["ground_truth_tier"] == 1)
+    over = evaluator.evaluate([{**task, "task_intent": "Trace callers of the function"}])
+    assert over.tier_confusion_matrix[1][2] == 1
+    assert (over.false_alarms, over.false_alarm_rate, over.misses) == (1, 1.0, 0)
+    assert over.task_evaluations[0]["classification"] == "False Alarm (Tier 1 sufficed)"
+
+    under = evaluator.evaluate([{**task, "ground_truth_tier": 2}])
+    assert under.tier_confusion_matrix[2][1] == 1
+    assert (under.misses, under.miss_rate, under.false_alarms) == (1, 1.0, 0)
+    assert under.task_evaluations[0]["classification"] == "Miss (needed Tier 2)"
 
 
 # ---------------------------------------------------------------------------
@@ -115,38 +126,34 @@ def test_evaluation_metrics_arithmetic(evaluator: DecisionEvaluator, dataset: li
 
 
 def test_benchmark_zero_critical_misses(evaluator: DecisionEvaluator):
-    """Verify zero critical misses (miss_rate == 0.0, FN == 0).
+    """Verify no task is served a lower tier than its ground truth.
 
-    A critical miss occurs when an agent requires the full implementation body
-    to perform a deep logic rewrite, but the model incorrectly serves only signatures.
-    Zero critical misses is a mandatory course safety requirement.
+    A miss leaves the agent without the context it needs (e.g. signatures only for a
+    deep logic rewrite). Zero misses is a mandatory course safety requirement.
     """
     metrics = evaluator.evaluate()
 
-    assert metrics.fn == 0, f"Critical misses detected: FN = {metrics.fn}"
+    assert metrics.misses == 0, f"Misses detected: {metrics.misses}"
     assert metrics.miss_rate == 0.0
-    assert metrics.recall == 1.0
+    assert metrics.per_tier[3]["recall"] == 1.0
 
 
 def test_benchmark_minimal_false_alarms(evaluator: DecisionEvaluator):
-    """Verify minimal false alarm rate (FP <= 1, false_alarm_rate <= 0.10).
-
-    A false alarm wastes tokens by allocating full body context when signatures sufficed.
-    """
+    """Verify no task is served a higher tier than its ground truth (no wasted tokens)."""
     metrics = evaluator.evaluate()
 
-    assert metrics.fp == 0, f"False alarms detected: FP = {metrics.fp}"
-    assert metrics.false_alarm_rate <= 0.10
+    assert metrics.false_alarms == 0, f"False alarms detected: {metrics.false_alarms}"
+    assert metrics.false_alarm_rate == 0.0
 
 
 def test_benchmark_high_accuracy(evaluator: DecisionEvaluator):
-    """Verify overall binary accuracy >= 95% and tier accuracy >= 90%."""
+    """Verify 3-tier accuracy >= 95% on the (hand-calibrated, not held-out) dataset."""
     metrics = evaluator.evaluate()
 
     assert metrics.accuracy >= 0.95
-    assert metrics.tier_accuracy >= 0.90
-    assert metrics.tp >= 10
-    assert metrics.tn >= 10
+    assert metrics.per_tier[1]["support"] >= 5
+    assert metrics.per_tier[2]["support"] >= 5
+    assert metrics.per_tier[3]["support"] >= 10
 
 
 # ---------------------------------------------------------------------------
@@ -160,9 +167,11 @@ def test_markdown_report_generation(evaluator: DecisionEvaluator):
     report = evaluator.generate_markdown_report(metrics)
 
     assert "# Decision Model Benchmark Evaluation Report (Block 4)" in report
-    assert "2x2 Binary Confusion Matrix" in report
-    assert "3x3 Tier Selection Matrix" in report
+    assert "2x2" not in report
+    assert "3x3 Tier Confusion Matrix" in report
+    assert "picked by hand on these same tasks" in report
     assert "False Alarm Rate" in report
     assert "Miss Rate" in report
-    assert "TN = 10" in report
-    assert "TP = 10" in report
+    tcm = metrics.tier_confusion_matrix
+    for a in (1, 2, 3):
+        assert f"| **Actual Tier {a}** | {tcm[a][1]} | {tcm[a][2]} | {tcm[a][3]} |" in report

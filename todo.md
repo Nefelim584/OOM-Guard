@@ -154,10 +154,10 @@
 
 ## Phase 20: Decision Model Quick Fixes and Honest Reporting (Block 4)
 *Feature: Fix the cheap, obvious problems in the classifier and its evaluation before the heavier refit in Phase 21.*
-- [ ] Step 20.1: Replace the binary 2x2 confusion matrix with a 3x3 one (Tier 1 / 2 / 3), because mistakes between Tier 1 and Tier 2 are not measured today.
-- [ ] Step 20.2: Fix wrong keyword hits: `\badd\w*` matches "address", `\blist\w*` matches "list[int]", `\btype\w*` matches "typed dict"; use exact word forms, and add test cases for each false hit.
-- [ ] Step 20.3: Add `escalation_rate` (how often the agent had to raise `min_tier`) to the `get_token_ledger` summary, so the Pi runs from Phase 14 give a real miss-rate number.
-- [ ] Step 20.4: State plainly in `README.md` that the weights are hand-picked, that the 20-task result is measured on the same tasks used to pick them, and that today the tier is decided almost only by the verb in `task_intent` ($x_1 = 1$ can never reach Tier 1, $x_1 = 2$ is always Tier 3).
+- [x] Step 20.1: Replace the binary 2x2 confusion matrix with a 3x3 one (Tier 1 / 2 / 3), because mistakes between Tier 1 and Tier 2 are not measured today.
+- [x] Step 20.2: Fix wrong keyword hits: `\badd\w*` matches "address", `\blist\w*` matches "list[int]", `\btype\w*` matches "typed dict"; use exact word forms, and add test cases for each false hit.
+- [x] Step 20.3: Add `escalation_rate` (how often the agent had to raise `min_tier`) to the `get_token_ledger` summary, so the Pi runs from Phase 14 give a real miss-rate number.
+- [x] Step 20.4: State plainly in `README.md` that the weights are hand-picked, that the 20-task result is measured on the same tasks used to pick them, and that today the tier is decided almost only by the verb in `task_intent` ($x_1 = 1$ can never reach Tier 1, $x_1 = 2$ is always Tier 3).
 - [ ] Step 20.5: Run the full test suite and suggest commit name: `fix(decision): 3-tier confusion matrix, keyword fixes, and escalation rate`.
 
 ## Phase 21: Honest Calibration of the Decision Model

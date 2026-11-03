@@ -130,6 +130,48 @@ def test_intent_subject_nouns_do_not_force_depth_2(classifier: TaskIntentClassif
     assert classifier.classify(query) != 2
 
 
+@pytest.mark.parametrize(
+    "query,expected_depth",
+    [
+        # `add` must not match "address" (old result: tie with check -> 1)
+        ("Check the address field of User", 0),
+        # `list` must not match the annotation "list[int]" (old result: 2 depth-0 hits beat rename -> 0)
+        ("Rename the argument of parse_ids(values: list[int])", 1),
+        # `type` must not match "typed" (old result: 2 depth-0 hits beat change -> 0)
+        ("Change the interface of load_config to return a typed dict", 1),
+        # `fix` must not match "fixture" (old result: tie with check -> 2)
+        ("Check the pytest fixture for the database", 0),
+        # `trace` must not match "tracker" (old result: tie with inspect -> 1)
+        ("Inspect the budget tracker class", 0),
+        # `change` must not match "changelog" (old result: tie with view -> 1)
+        ("View the changelog entry for release_notes", 0),
+        # `optimize` must not match "optimistic" (old result: tie with check -> 2)
+        ("Check optimistic locking in save_order", 0),
+    ],
+)
+def test_intent_exact_word_forms_avoid_false_hits(
+    classifier: TaskIntentClassifier, query: str, expected_depth: int
+):
+    """Verify keywords match whole word forms only, not longer words that share a prefix."""
+    assert classifier.classify(query) == expected_depth
+
+
+@pytest.mark.parametrize(
+    "query,expected_depth",
+    [
+        ("List the methods of TokenCache", 0),
+        ("Add a parameter to parse_ids", 1),
+        ("Show the types of each field", 0),
+        ("Check the implementation of retry", 2),
+    ],
+)
+def test_intent_real_keyword_uses_still_match(
+    classifier: TaskIntentClassifier, query: str, expected_depth: int
+):
+    """Verify the narrower patterns still match the intended uses of list, add, type, and implementation."""
+    assert classifier.classify(query) == expected_depth
+
+
 # ---------------------------------------------------------------------------
 # 2. Feature Extraction & Compilation Tests (Step 4.2)
 # ---------------------------------------------------------------------------

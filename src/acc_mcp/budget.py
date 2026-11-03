@@ -47,9 +47,9 @@ class RetrievalRecord:
 
     @property
     def was_escalated(self) -> bool:
-        """True when the agent explicitly escalated above the model's choice."""
+        """True when the agent asked with min_tier for more than the model's choice."""
         if self.model_tier is not None and self.requested_min_tier is not None:
-            return self.served_tier > self.model_tier
+            return self.requested_min_tier > self.model_tier
         return False
 
     def to_dict(self) -> dict[str, Any]:
@@ -151,6 +151,7 @@ class ContextBudgetTracker:
         self._total_baseline_tokens = 0
         self._total_served_tokens = 0
         self._tier_counts: dict[int, int] = {1: 0, 2: 0, 3: 0}
+        self._total_escalations = 0
 
         self.session_served_tokens = 0
         self.session_requests = 0
@@ -214,17 +215,34 @@ class ContextBudgetTracker:
     def tier_distribution(self) -> dict[int, int]:
         return dict(self._tier_counts)
 
+    @property
+    def total_escalations(self) -> int:
+        return self._total_escalations
+
+    @property
+    def escalation_rate(self) -> float:
+        """Share of requests where the agent raised min_tier above the model's tier.
+
+        Each escalation follows a slice the agent found insufficient, so this is a
+        real-world miss-rate signal for the decision model.
+        """
+        if self._total_requests == 0:
+            return 0.0
+        return round(self._total_escalations / self._total_requests, 4)
+
     def _clear_totals(self) -> None:
         self._total_requests = 0
         self._total_baseline_tokens = 0
         self._total_served_tokens = 0
         self._tier_counts = {1: 0, 2: 0, 3: 0}
+        self._total_escalations = 0
 
     def _add_to_totals(self, record: RetrievalRecord) -> None:
         self._total_requests += 1
         self._total_baseline_tokens += record.baseline_tokens
         self._total_served_tokens += record.served_tokens
         self._tier_counts[record.served_tier] = self._tier_counts.get(record.served_tier, 0) + 1
+        self._total_escalations += int(record.was_escalated)
 
     def _trim_history(self) -> None:
         if len(self.history) > self.history_limit:
@@ -365,6 +383,8 @@ class ContextBudgetTracker:
             "cumulative_tokens_saved": self.cumulative_tokens_saved,
             "overall_savings_percentage": self.overall_savings_percentage,
             "tier_distribution": self.tier_distribution,
+            "escalations": self.total_escalations,
+            "escalation_rate": self.escalation_rate,
             "cached_files_count": len(self._symbol_cache),
             "history_records": len(self.history),
             "history_limit": self.history_limit,
@@ -387,6 +407,7 @@ class ContextBudgetTracker:
                 "baseline_tokens": self._total_baseline_tokens,
                 "served_tokens": self._total_served_tokens,
                 "tier_counts": self._tier_counts,
+                "escalations": self._total_escalations,
             },
             "history": [r.to_dict() for r in self.history],
             "symbol_cache": self._symbol_cache,
@@ -420,6 +441,9 @@ class ContextBudgetTracker:
                 self._total_served_tokens = int(totals["served_tokens"])
                 self._tier_counts.update(
                     {int(tier): int(n) for tier, n in totals.get("tier_counts", {}).items()}
+                )
+                self._total_escalations = int(
+                    totals.get("escalations", sum(r.was_escalated for r in self.history))
                 )
             else:
                 # Ledgers written before totals were stored kept the full history

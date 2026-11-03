@@ -296,9 +296,10 @@ def create_server(
     async def get_token_ledger() -> str:
         """Retrieve the cumulative session token audit log and savings ledger.
 
-        `summary` has all-time totals plus the current session budget (`session_budget`,
-        `session_served_tokens`, `session_remaining_tokens`). `history` holds only the most
-        recent `history_limit` requests.
+        `summary` has all-time totals, `escalation_rate` (share of requests where min_tier
+        was raised above the model's tier), and the current session budget
+        (`session_budget`, `session_served_tokens`, `session_remaining_tokens`). `history`
+        holds only the most recent `history_limit` requests.
         """
         payload = {
             "summary": budget_tracker.get_summary(),
