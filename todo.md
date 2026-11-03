@@ -18,19 +18,19 @@
 
 ## Phase 3: Full Body Extraction & Deterministic Guardrails (Block 3)
 *Feature: Tier 3 context extraction with hard security path checks and deterministic AST token ceiling enforcement.*
-- [ ] Step 3.1: Implement Tier 3 full symbol implementation body extraction in `src/acc_mcp/parser.py`.
-- [ ] Step 3.2: Implement `GuardRail` in `src/acc_mcp/guard.py` enforcing the Protected Path Rule (raising `SecurityViolationError` for `.env`, `.git/`, `credentials.json`, `alembic/migrations/`).
-- [ ] Step 3.3: Implement deterministic token ceiling truncation ($C_{\max} = 2,000$ tokens) via AST node slicing using the pluggable token counter.
-- [ ] Step 3.4: Write unit tests in `tests/test_guard.py` verifying security rejections and deterministic ceiling truncation.
-- [ ] Step 3.5: Run test suite, verify guardrail behavior passes, and suggest commit name: `feat(guard): implement path security guardrails and AST token ceiling truncation`.
+- [x] Step 3.1: Implement Tier 3 full symbol implementation body extraction in `src/acc_mcp/parser.py`.
+- [x] Step 3.2: Implement `GuardRail` in `src/acc_mcp/guard.py` enforcing the Protected Path Rule (raising `SecurityViolationError` for `.env`, `.git/`, `credentials.json`, `alembic/migrations/`).
+- [x] Step 3.3: Implement deterministic token ceiling truncation ($C_{\max} = 2,000$ tokens) via AST node slicing using the pluggable token counter.
+- [x] Step 3.4: Write unit tests in `tests/test_guard.py` verifying security rejections and deterministic ceiling truncation.
+- [x] Step 3.5: Run test suite, verify guardrail behavior passes, and suggest commit name: `feat(guard): implement path security guardrails and AST token ceiling truncation`.
 
 ## Phase 4: Decision Model & Intent Feature Extractor (Block 4)
 *Feature: Query intent analysis, AST feature fusion, and logistic scoring for dynamic tier selection.*
-- [ ] Step 4.1: Implement task intent classifier in `src/acc_mcp/decision.py` extracting task depth $x_1 \in \{0, 1, 2\}$ (inspect vs refactor vs rewrite).
-- [ ] Step 4.2: Implement feature vector compilation $(x_1, x_2, x_3, x_4)$ fusing task intent and AST metrics.
-- [ ] Step 4.3: Implement logistic scoring model ($z = w_0 + w_1 x_1 + w_2 x_2 + w_3 x_3 - w_4 x_4$), sigmoid probability $P(\text{Full})$, and threshold tier policy ($\theta_{\text{low}} = 0.30$, $\theta_{\text{high}} = 0.65$).
-- [ ] Step 4.4: Write unit tests in `tests/test_decision.py` verifying scoring, probability, and tier boundary decisions.
-- [ ] Step 4.5: Run test suite, verify decision engine passes, and suggest commit name: `feat(decision): implement logistic scoring model and adaptive tier selection policy`.
+- [x] Step 4.1: Implement task intent classifier in `src/acc_mcp/decision.py` extracting task depth $x_1 \in \{0, 1, 2\}$ (inspect vs refactor vs rewrite).
+- [x] Step 4.2: Implement feature vector compilation $(x_1, x_2, x_3, x_4)$ fusing task intent and AST metrics.
+- [x] Step 4.3: Implement logistic scoring model ($z = w_0 + w_1 x_1 + w_2 x_2 + w_3 x_3 - w_4 x_4$), sigmoid probability $P(\text{Full})$, and threshold tier policy ($\theta_{\text{low}} = 0.30$, $\theta_{\text{high}} = 0.65$).
+- [x] Step 4.4: Write unit tests in `tests/test_decision.py` verifying scoring, probability, and tier boundary decisions.
+- [x] Step 4.5: Run test suite, verify decision engine passes, and suggest commit name: `feat(decision): implement logistic scoring model and adaptive tier selection policy`.
 
 ## Phase 5: Decision Model Ground-Truth Benchmark & Evaluation (Block 4 Evaluation)
 *Feature: Ground-truth validation dataset, confusion matrix computation, and decision model calibration.*
