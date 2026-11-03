@@ -90,11 +90,11 @@
 
 ## Phase 12: Tier Escalation and Clearer Tool Instructions
 *Feature: Let the agent ask for a deeper tier when the slice it got was not enough, and tell the agent what to write in `task_intent` so the classifier sees useful input.*
-- [ ] Step 12.1: Add an optional `min_tier` argument to `get_adaptive_context` and serve `max(decision.tier, min_tier)`, so the decision model still picks the default tier but the agent can raise it. No server-side session state is needed.
-- [ ] Step 12.2: Rewrite the tool docstring to tell the agent what `task_intent` should contain (a few words about what it needs right now, e.g. "check signature", "trace callers", "rewrite body") and how to retry with a higher `min_tier` if the previous slice was insufficient.
-- [ ] Step 12.3: Record both the requested `min_tier` and the tier actually served in the budget ledger, so how often the agent escalates becomes a measurable, real-world miss-rate signal.
-- [ ] Step 12.4: Write tests in `tests/test_server.py` verifying that `min_tier=3` raises an inspection query to Tier 3, that a `min_tier` below the model's own choice never lowers the tier, and that the ledger stores both values.
-- [ ] Step 12.5: Run the full test suite, verify escalation behavior passes, and suggest commit name: `feat(server): add min_tier escalation parameter and intent guidance`.
+- [x] Step 12.1: Add an optional `min_tier` argument to `get_adaptive_context` and serve `max(decision.tier, min_tier)`, so the decision model still picks the default tier but the agent can raise it. No server-side session state is needed.
+- [x] Step 12.2: Rewrite the tool docstring to tell the agent what `task_intent` should contain (a few words about what it needs right now, e.g. "check signature", "trace callers", "rewrite body") and how to retry with a higher `min_tier` if the previous slice was insufficient.
+- [x] Step 12.3: Record both the requested `min_tier` and the tier actually served in the budget ledger, so how often the agent escalates becomes a measurable, real-world miss-rate signal.
+- [x] Step 12.4: Write tests in `tests/test_server.py` verifying that `min_tier=3` raises an inspection query to Tier 3, that a `min_tier` below the model's own choice never lowers the tier, and that the ledger stores both values.
+- [x] Step 12.5: Run the full test suite, verify escalation behavior passes, and suggest commit name: `feat(server): add min_tier escalation parameter and intent guidance`.
 
 ## Phase 13: Honest Calibration of the Decision Model
 *Feature: Turn Block 4 from hand-picked weights measured on their own dataset into a model that is fitted on training data and reported on data it has never seen.*

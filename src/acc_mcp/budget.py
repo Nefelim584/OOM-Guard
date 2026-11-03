@@ -32,6 +32,15 @@ class RetrievalRecord:
     tokens_saved: int
     savings_percentage: float
     ground_truth_tokens: int | None = None
+    requested_min_tier: int | None = None
+    model_tier: int | None = None
+
+    @property
+    def was_escalated(self) -> bool:
+        """True when the agent explicitly escalated above the model's choice."""
+        if self.model_tier is not None and self.requested_min_tier is not None:
+            return self.served_tier > self.model_tier
+        return False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -50,6 +59,8 @@ class RetrievalRecord:
             tokens_saved=int(data["tokens_saved"]),
             savings_percentage=float(data["savings_percentage"]),
             ground_truth_tokens=data.get("ground_truth_tokens"),
+            requested_min_tier=data.get("requested_min_tier"),
+            model_tier=data.get("model_tier"),
         )
 
 
@@ -152,6 +163,8 @@ class ContextBudgetTracker:
         served_content: str,
         symbol_name: str | None = None,
         query_id: str | None = None,
+        requested_min_tier: int | None = None,
+        model_tier: int | None = None,
     ) -> RetrievalRecord:
         """Record context retrieval event, computing tokens and savings percentage."""
         q_id = query_id or f"q_{uuid.uuid4().hex[:8]}"
@@ -178,6 +191,8 @@ class ContextBudgetTracker:
             served_tokens=served_tokens,
             tokens_saved=tokens_saved,
             savings_percentage=savings_pct,
+            requested_min_tier=requested_min_tier,
+            model_tier=model_tier,
         )
 
         self.history.append(record)

@@ -278,3 +278,137 @@ async def test_server_persistent_ledger_file(sample_source_file: Path, temp_ledg
     assert data["summary"]["total_requests"] == 1
     assert data["summary"]["cached_files_count"] >= 1
     assert len(data["history"]) == 1
+
+
+
+# ---------------------------------------------------------------------------
+# 6. min_tier Escalation Tests (Step 12.4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_min_tier_escalates_inspection_to_tier3(sample_source_file: Path, temp_ledger: Path):
+    """Verify min_tier=3 forces Tier 3 even when intent is pure inspection (normally Tier 1)."""
+    server = create_server(ledger_path=temp_ledger)
+
+    result = await server.call_tool(
+        "get_adaptive_context",
+        {
+            "file_path": str(sample_source_file),
+            "task_intent": "Inspect the UserManager authenticate signature",
+            "symbol_name": "UserManager.authenticate",
+            "min_tier": 3,
+        },
+    )
+
+    assert result.is_error is False
+    text = result.content[0].text
+
+    # Full implementation body must be present (Tier 3), not stubbed
+    assert "if not username or not token:" in text
+    assert "self._cache[username] = token" in text
+
+    # Valid Python syntax
+    parsed = ast.parse(text)
+    assert isinstance(parsed, ast.Module)
+
+
+@pytest.mark.asyncio
+async def test_min_tier_cannot_lower_model_choice(sample_source_file: Path, temp_ledger: Path):
+    """Verify that min_tier below the model's own tier never lowers the served tier."""
+    server = create_server(ledger_path=temp_ledger)
+
+    # Rewrite intent naturally selects Tier 3
+    result = await server.call_tool(
+        "get_adaptive_context",
+        {
+            "file_path": str(sample_source_file),
+            "task_intent": "Rewrite authentication logic in UserManager.authenticate",
+            "symbol_name": "UserManager.authenticate",
+            "min_tier": 1,
+        },
+    )
+
+    assert result.is_error is False
+    text = result.content[0].text
+
+    # Full implementation body must still be present (model chose Tier 3, min_tier=1 can't lower it)
+    assert "if not username or not token:" in text
+    assert "self._cache[username] = token" in text
+
+
+@pytest.mark.asyncio
+async def test_min_tier_ledger_records_escalation_metadata(sample_source_file: Path, temp_ledger: Path):
+    """Verify ledger records requested_min_tier and model_tier for escalation tracking."""
+    server = create_server(ledger_path=temp_ledger)
+
+    # Inspection intent (model will pick Tier 1) with min_tier=3 override
+    await server.call_tool(
+        "get_adaptive_context",
+        {
+            "file_path": str(sample_source_file),
+            "task_intent": "Check calculate_hash signature",
+            "symbol_name": "calculate_hash",
+            "min_tier": 3,
+        },
+    )
+
+    ledger_res = await server.call_tool("get_token_ledger", {})
+    data = json.loads(ledger_res.content[0].text)
+
+    assert len(data["history"]) == 1
+    record = data["history"][0]
+
+    # Served tier must be escalated to 3
+    assert record["served_tier"] == 3
+    # Model's own choice should be recorded (Tier 1 for inspection)
+    assert record["model_tier"] == 1
+    # Requested min_tier should be recorded
+    assert record["requested_min_tier"] == 3
+
+
+@pytest.mark.asyncio
+async def test_min_tier_none_behaves_as_before(sample_source_file: Path, temp_ledger: Path):
+    """Verify that omitting min_tier preserves original behavior and records None in ledger."""
+    server = create_server(ledger_path=temp_ledger)
+
+    await server.call_tool(
+        "get_adaptive_context",
+        {
+            "file_path": str(sample_source_file),
+            "task_intent": "Check calculate_hash signature",
+            "symbol_name": "calculate_hash",
+        },
+    )
+
+    ledger_res = await server.call_tool("get_token_ledger", {})
+    data = json.loads(ledger_res.content[0].text)
+
+    record = data["history"][0]
+    assert record["served_tier"] == 1
+    assert record["model_tier"] == 1
+    assert record["requested_min_tier"] is None
+
+
+@pytest.mark.asyncio
+async def test_min_tier_clamped_to_valid_range(sample_source_file: Path, temp_ledger: Path):
+    """Verify out-of-range min_tier values are clamped to [1, 3]."""
+    server = create_server(ledger_path=temp_ledger)
+
+    # min_tier=5 should be clamped to 3
+    result = await server.call_tool(
+        "get_adaptive_context",
+        {
+            "file_path": str(sample_source_file),
+            "task_intent": "Check calculate_hash signature",
+            "symbol_name": "calculate_hash",
+            "min_tier": 5,
+        },
+    )
+    assert result.is_error is False
+
+    ledger_res = await server.call_tool("get_token_ledger", {})
+    data = json.loads(ledger_res.content[0].text)
+    record = data["history"][0]
+    assert record["served_tier"] == 3
+    assert record["requested_min_tier"] == 3

@@ -59,12 +59,26 @@ def create_server(
         file_path: str,
         task_intent: str,
         symbol_name: str | None = None,
+        min_tier: int | None = None,
     ) -> str:
         """Retrieve an adaptively compressed code slice for a target file and query.
 
-        Extracts AST features, evaluates task depth, and returns Tier 1 (interfaces/docstrings),
-        Tier 2 (call-graph/skeleton slice), or Tier 3 (full body), enforcing strict token ceilings
-        and security path guardrails.
+        The decision model picks the optimal tier from your task_intent:
+        - Tier 1 (signatures/docstrings): use verbs like "check", "inspect", "view", "list"
+        - Tier 2 (call-graph skeleton): use verbs like "trace", "refactor", "rename", "deprecate"
+        - Tier 3 (full implementation): use verbs like "fix", "debug", "rewrite", "optimize"
+
+        If the returned slice is insufficient, retry with min_tier=2 or min_tier=3 to
+        escalate without changing your task_intent.  The model's own choice is never
+        lowered below min_tier, but min_tier cannot lower it either.
+
+        Args:
+            file_path: Path to the target Python source file.
+            task_intent: Short phrase describing what you need right now
+                         (e.g. "check signature", "trace callers", "rewrite body").
+            symbol_name: Optional target symbol within the file.
+            min_tier: Optional floor (1, 2, or 3) for the served tier.
+                      The served tier is max(model_tier, min_tier).
         """
         # 1. Enforce Protected Path Rule
         guard.validate_path(file_path)
@@ -90,25 +104,33 @@ def create_server(
             symbol_name=symbol_name,
         )
 
-        # 5. Extract structural context slice
-        if decision.tier == 1:
+        # 5. Apply min_tier escalation (never lower the model's choice)
+        effective_min_tier = max(1, min(3, min_tier)) if min_tier is not None else None
+        served_tier = decision.tier
+        if effective_min_tier is not None and effective_min_tier > served_tier:
+            served_tier = effective_min_tier
+
+        # 6. Extract structural context slice at served tier
+        if served_tier == 1:
             raw_context = parser.get_tier1_context(symbol_name=symbol_name)
-        elif decision.tier == 2:
+        elif served_tier == 2:
             raw_context = parser.get_tier2_context(symbol_name=symbol_name)
         else:
             raw_context = parser.get_tier3_context(symbol_name=symbol_name)
 
-        # 6. Enforce deterministic token ceiling
+        # 7. Enforce deterministic token ceiling
         final_context = guard.enforce_ceiling(raw_context)
 
-        # 7. Record multi-turn token accounting
+        # 8. Record multi-turn token accounting with escalation metadata
         budget_tracker.record_retrieval(
             file_path=str(path_obj),
             task_intent=task_intent,
-            served_tier=decision.tier,
+            served_tier=served_tier,
             baseline_content=file_content,
             served_content=final_context,
             symbol_name=symbol_name,
+            requested_min_tier=effective_min_tier,
+            model_tier=decision.tier,
         )
 
         return final_context
