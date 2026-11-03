@@ -1,5 +1,11 @@
 """Adaptive Context Compressor MCP (ACC-MCP)."""
 
+from acc_mcp.decision import (
+    ContextFeatures,
+    DecisionModel,
+    DecisionResult,
+    TaskIntentClassifier,
+)
 from acc_mcp.guard import GuardRail, SecurityViolationError
 from acc_mcp.parser import ASTParser, SymbolInfo
 from acc_mcp.tokens import (
@@ -19,4 +25,8 @@ __all__ = [
     "HeuristicTokenCounter",
     "EndpointTokenCounter",
     "get_token_counter",
+    "TaskIntentClassifier",
+    "DecisionModel",
+    "ContextFeatures",
+    "DecisionResult",
 ]

@@ -1,0 +1,250 @@
+"""Unit tests for TaskIntentClassifier, DecisionModel, and Adaptive Tier Selection (Block 4)."""
+
+import math
+import pytest
+from acc_mcp.decision import (
+    ContextFeatures,
+    DecisionModel,
+    DecisionResult,
+    TaskIntentClassifier,
+)
+from acc_mcp.guard import GuardRail, SecurityViolationError
+from acc_mcp.parser import ASTParser
+
+
+# ---------------------------------------------------------------------------
+# 1. Task Intent Classification Tests (Step 4.1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def classifier() -> TaskIntentClassifier:
+    return TaskIntentClassifier()
+
+
+@pytest.fixture
+def decision_model() -> DecisionModel:
+    return DecisionModel()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Inspect the arguments of the connect function",
+        "Check docstring and return type of execute_query",
+        "View signatures in DatabaseManager",
+        "What is the parameter type for data?",
+        "How to call compute_metrics from another service?",
+        "Show method interface and type hints",
+        "List all methods in class",
+    ],
+)
+def test_intent_depth_0_inspection(classifier: TaskIntentClassifier, query: str):
+    """Verify inspection and interface queries resolve to depth x_1 = 0."""
+    assert classifier.classify(query) == 0
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Refactor PaymentProcessor method parameters",
+        "Trace all callers and callees of validate_user",
+        "Rename the database connection method across callers",
+        "Deprecate legacy interface and add new parameter",
+        "Analyze call graph dependencies of this module",
+        "Patch method signature to support optional timeout",
+        "Wrap the database client with dependency injection",
+    ],
+)
+def test_intent_depth_1_refactor_dependencies(classifier: TaskIntentClassifier, query: str):
+    """Verify refactoring, patching, and call-graph queries resolve to depth x_1 = 1."""
+    assert classifier.classify(query) == 1
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Rewrite the transaction retry algorithm to prevent lockups",
+        "Fix critical bug in process_transaction when amount is negative",
+        "Debug race condition and memory leak in message loop",
+        "Reimplement the payment validation logic from scratch",
+        "Optimize hot loop algorithm for performance",
+        "Fix crash caused by unhandled ServiceError exception",
+        "Complete overhaul of execution logic",
+    ],
+)
+def test_intent_depth_2_rewrite_debug(classifier: TaskIntentClassifier, query: str):
+    """Verify deep algorithmic rewrites and bug fixes resolve to depth x_1 = 2."""
+    assert classifier.classify(query) == 2
+
+
+# ---------------------------------------------------------------------------
+# 2. Feature Extraction & Compilation Tests (Step 4.2)
+# ---------------------------------------------------------------------------
+
+
+def test_feature_extraction_single_symbol(decision_model: DecisionModel, complex_parser: ASTParser):
+    """Verify feature vector compilation (x1, x2, x3, x4) for a specific symbol."""
+    features = decision_model.extract_features(
+        task_intent="Trace callers of validate_user",
+        parser=complex_parser,
+        symbol_name="validate_user",
+    )
+
+    # x1: trace -> 1
+    assert features.task_depth == 1
+    # x2: cyclomatic complexity >= 3
+    assert features.cyclomatic_complexity >= 3
+    # x3: called by PaymentProcessor.process_transaction -> in_degree >= 1
+    assert features.in_degree >= 1
+    # x4: has type hints and docstring -> 1
+    assert features.has_annotations == 1
+
+    tup = features.to_tuple()
+    assert len(tup) == 4
+    assert tup == (features.task_depth, features.cyclomatic_complexity, features.in_degree, features.has_annotations)
+
+
+def test_feature_extraction_module_level(decision_model: DecisionModel, tier1_parser: ASTParser):
+    """Verify feature extraction aggregate fallback when symbol_name is None."""
+    features = decision_model.extract_features(
+        task_intent="Inspect all signatures",
+        parser=tier1_parser,
+        symbol_name=None,
+    )
+
+    assert features.task_depth == 0
+    assert features.cyclomatic_complexity >= 1
+    assert features.in_degree >= 0
+
+
+# ---------------------------------------------------------------------------
+# 3. Logistic Scoring & Sigmoid Math Tests (Step 4.3)
+# ---------------------------------------------------------------------------
+
+
+def test_logit_calculation(decision_model: DecisionModel):
+    """Verify exact formula z = w0 + w1*x1 + w2*x2 + w3*x3 - w4*x4."""
+    # Custom weights test
+    custom_model = DecisionModel(w0=-2.0, w1=2.0, w2=0.2, w3=0.3, w4=1.0)
+    features = ContextFeatures(task_depth=2, cyclomatic_complexity=5, in_degree=2, has_annotations=1)
+
+    # z = -2.0 + (2.0 * 2) + (0.2 * 5) + (0.3 * 2) - (1.0 * 1)
+    # z = -2.0 + 4.0 + 1.0 + 0.6 - 1.0 = 2.6
+    expected_z = -2.0 + 4.0 + 1.0 + 0.6 - 1.0
+    computed_z = custom_model.compute_logit(features)
+
+    assert math.isclose(computed_z, expected_z, abs_tol=1e-5)
+
+
+def test_sigmoid_probability_bounds(decision_model: DecisionModel):
+    """Verify sigmoid output properties: 0 < P < 1, monotonicity, extreme stability."""
+    assert decision_model.compute_probability(0.0) == 0.5
+    assert decision_model.compute_probability(50.0) == 1.0
+    assert decision_model.compute_probability(-50.0) == 0.0
+
+    p_low = decision_model.compute_probability(-2.0)
+    p_mid = decision_model.compute_probability(0.0)
+    p_high = decision_model.compute_probability(2.0)
+
+    assert 0.0 < p_low < p_mid < p_high < 1.0
+
+
+# ---------------------------------------------------------------------------
+# 4. Decision Policy & Tier Threshold Tests (Step 4.3)
+# ---------------------------------------------------------------------------
+
+
+def test_tier_selection_boundaries(decision_model: DecisionModel):
+    """Verify tier assignment based on calibrated thresholds theta_low=0.30, theta_high=0.65."""
+    # Tier 1 case: low depth, low complexity, rich docstrings -> P < 0.30
+    tier1_feat = ContextFeatures(task_depth=0, cyclomatic_complexity=1, in_degree=0, has_annotations=1)
+    res1 = decision_model.evaluate(tier1_feat)
+    assert res1.tier == 1
+    assert res1.probability < 0.30
+    assert "signatures and docstrings suffice" in res1.reasoning
+
+    # Tier 2 case: intermediate depth (refactor), moderate complexity
+    tier2_feat = ContextFeatures(task_depth=1, cyclomatic_complexity=2, in_degree=2, has_annotations=1)
+    res2 = decision_model.evaluate(tier2_feat)
+    assert res2.tier == 2
+    assert 0.30 <= res2.probability < 0.65
+    assert "Call-graph skeleton" in res2.reasoning
+
+    # Tier 3 case: full rewrite (depth=2), high complexity (CC=8)
+    tier3_feat = ContextFeatures(task_depth=2, cyclomatic_complexity=8, in_degree=1, has_annotations=0)
+    res3 = decision_model.evaluate(tier3_feat)
+    assert res3.tier == 3
+    assert res3.probability >= 0.65
+    assert "Full implementation body strictly required" in res3.reasoning
+
+
+# ---------------------------------------------------------------------------
+# 5. End-to-End Adaptive Context Retrieval Tests (Step 4.3)
+# ---------------------------------------------------------------------------
+
+
+def test_adaptive_context_tier1_dispatch(
+    decision_model: DecisionModel, complex_parser: ASTParser, default_guard: GuardRail
+):
+    """Verify inspection intent triggers Tier 1 context containing stubbed bodies."""
+    context, result = decision_model.get_adaptive_context(
+        task_intent="Inspect type hints and signature for log_audit",
+        parser=complex_parser,
+        symbol_name="log_audit",
+        guard=default_guard,
+    )
+
+    assert result.tier == 1
+    assert "def log_audit(action: str, user_id: int) -> None:" in context
+    assert "..." in context
+    assert "print(f" not in context  # Body stubbed
+
+
+def test_adaptive_context_tier2_dispatch(
+    decision_model: DecisionModel, complex_parser: ASTParser, default_guard: GuardRail
+):
+    """Verify refactor/dependency query triggers Tier 2 context containing call-graph."""
+    context, result = decision_model.get_adaptive_context(
+        task_intent="Trace callers and refactor dependencies of validate_user",
+        parser=complex_parser,
+        symbol_name="validate_user",
+        guard=default_guard,
+    )
+
+    assert result.tier == 2
+    assert "Tier 2 Context: Call-Graph Slice" in context
+    assert "Cyclomatic Complexity" in context
+    assert "PaymentProcessor" in context  # Caller interface included
+
+
+def test_adaptive_context_tier3_dispatch(
+    decision_model: DecisionModel, complex_parser: ASTParser, default_guard: GuardRail
+):
+    """Verify rewrite/bug fix query triggers Tier 3 context containing full implementation body."""
+    context, result = decision_model.get_adaptive_context(
+        task_intent="Rewrite and fix bug in validate_user logic",
+        parser=complex_parser,
+        symbol_name="validate_user",
+        guard=default_guard,
+    )
+
+    assert result.tier == 3
+    assert "if user_id <= 0:" in context
+    assert "Invalid user ID" in context
+    assert "User lacks admin role" in context
+
+
+def test_adaptive_context_security_rejection(
+    decision_model: DecisionModel, complex_parser: ASTParser, default_guard: GuardRail
+):
+    """Verify GuardRail rejects protected paths even when invoked through get_adaptive_context."""
+    complex_parser.file_path = ".env"
+
+    with pytest.raises(SecurityViolationError):
+        decision_model.get_adaptive_context(
+            task_intent="Inspect environment variables",
+            parser=complex_parser,
+            symbol_name=None,
+            guard=default_guard,
+        )
