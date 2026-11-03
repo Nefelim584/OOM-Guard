@@ -58,11 +58,11 @@
 
 ## Phase 8: Agent Harness & Local LLM Integration (R1)
 *Feature: Model-agnostic agent harness connecting ACC-MCP with standard OpenAI-compatible endpoints.*
-- [ ] Step 8.1: Implement model-agnostic agent harness client in `src/acc_mcp/harness.py` supporting standard OpenAI-compatible endpoints (extracting `usage.prompt_tokens`) with configurable backends (`llama-server`, `Ollama`, Cerebras).
-- [ ] Step 8.2: Implement agent workflow routing context retrieval requests through ACC-MCP before prompt dispatch.
-- [ ] Step 8.3: Implement trace logger capturing MCP handshake, context compression payload, and agent code generation response with token metrics.
-- [ ] Step 8.4: Write integration tests in `tests/test_harness.py` validating end-to-end agent query flow across configured backends.
-- [ ] Step 8.5: Run test suite, verify harness workflow passes, and suggest commit name: `feat(harness): integrate model-agnostic agent harness with ACC-MCP`.
+- [x] Step 8.1: Implement model-agnostic agent harness client in `src/acc_mcp/harness.py` supporting standard OpenAI-compatible endpoints (extracting `usage.prompt_tokens`) with configurable backends (`llama-server`, `Ollama`, Cerebras).
+- [x] Step 8.2: Implement agent workflow routing context retrieval requests through ACC-MCP before prompt dispatch.
+- [x] Step 8.3: Implement trace logger capturing MCP handshake, context compression payload, and agent code generation response with token metrics.
+- [x] Step 8.4: Write integration tests in `tests/test_harness.py` validating end-to-end agent query flow across configured backends.
+- [x] Step 8.5: Run test suite, verify harness workflow passes, and suggest commit name: `feat(harness): integrate model-agnostic agent harness with ACC-MCP`.
 
 ## Phase 9: Benchmark Suite: Baseline vs. Gated Comparison (Block 9)
 *Feature: Automated evaluation running 10 programming tasks x 3 runs comparing raw retrieval vs ACC-MCP.*

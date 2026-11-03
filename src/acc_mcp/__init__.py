@@ -9,6 +9,13 @@ from acc_mcp.decision import (
 )
 from acc_mcp.evaluate_decision import DecisionEvaluator, EvaluationMetrics
 from acc_mcp.guard import GuardRail, SecurityViolationError
+from acc_mcp.harness import (
+    AgentHarness,
+    AgentTrace,
+    BackendConfig,
+    LLMResponse,
+    OpenAIClient,
+)
 from acc_mcp.parser import ASTParser, SymbolInfo
 from acc_mcp.server import create_server, run_server
 from acc_mcp.tokens import (
@@ -38,4 +45,9 @@ __all__ = [
     "RetrievalRecord",
     "create_server",
     "run_server",
+    "BackendConfig",
+    "LLMResponse",
+    "AgentTrace",
+    "OpenAIClient",
+    "AgentHarness",
 ]
