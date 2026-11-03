@@ -34,11 +34,11 @@
 
 ## Phase 5: Decision Model Ground-Truth Benchmark & Evaluation (Block 4 Evaluation)
 *Feature: Ground-truth validation dataset, confusion matrix computation, and decision model calibration.*
-- [ ] Step 5.1: Create ground-truth dataset in `data/decision_dataset.json` containing 20 distinct coding tasks (10 interface-only, 10 deep logic rewrites).
-- [ ] Step 5.2: Implement evaluation script `src/acc_mcp/evaluate_decision.py` to calculate confusion matrix, false alarm rate, and miss rate.
-- [ ] Step 5.3: Calibrate weights and decision thresholds to ensure minimal false alarms and zero critical misses.
-- [ ] Step 5.4: Write automated tests in `tests/test_decision_eval.py` verifying benchmark accuracy and evaluation metrics.
-- [ ] Step 5.5: Run test suite, verify benchmark evaluation passes, and suggest commit name: `feat(decision): add 20-task benchmark dataset, evaluation runner, and model calibration`.
+- [x] Step 5.1: Create ground-truth dataset in `data/decision_dataset.json` containing 20 distinct coding tasks (10 interface-only, 10 deep logic rewrites).
+- [x] Step 5.2: Implement evaluation script `src/acc_mcp/evaluate_decision.py` to calculate confusion matrix, false alarm rate, and miss rate.
+- [x] Step 5.3: Calibrate weights and decision thresholds to ensure minimal false alarms and zero critical misses.
+- [x] Step 5.4: Write automated tests in `tests/test_decision_eval.py` verifying benchmark accuracy and evaluation metrics.
+- [x] Step 5.5: Run test suite, verify benchmark evaluation passes, and suggest commit name: `feat(decision): add 20-task benchmark dataset, evaluation runner, and model calibration`.
 
 ## Phase 6: Session Context Budget Tracker & Persistent Ledger (Block 5)
 *Feature: Multi-turn token accounting, savings calculation, and persistent JSON ledger with restart recovery.*

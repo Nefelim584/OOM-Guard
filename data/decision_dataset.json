@@ -1,0 +1,202 @@
+[
+  {
+    "id": "task_01",
+    "task_intent": "Check parameter types and return type for calculate_hash",
+    "target_symbol": "calculate_hash",
+    "category": "interface_only",
+    "requires_full_body": false,
+    "ground_truth_tier": 1,
+    "description": "Developer verifies input arguments and return type before calling hashing utility.",
+    "code_snippet": "\"\"\"Hashing utility module.\"\"\"\n\nimport hashlib\n\ndef calculate_hash(data: bytes, salt: str = \"default_salt\") -> str:\n    \"\"\"Compute SHA-256 hash with optional cryptographic salt.\"\"\"\n    salted = data + salt.encode('utf-8')\n    return hashlib.sha256(salted).hexdigest()\n"
+  },
+  {
+    "id": "task_02",
+    "task_intent": "Inspect DatabasePool connection parameters and timeout default",
+    "target_symbol": "DatabasePool.connect",
+    "category": "interface_only",
+    "requires_full_body": false,
+    "ground_truth_tier": 1,
+    "description": "Developer inspects connection method signature in DatabasePool class.",
+    "code_snippet": "\"\"\"Database connection pooling module.\"\"\"\n\nclass DatabasePool:\n    \"\"\"Manages a pool of persistent database connections.\"\"\"\n\n    def __init__(self, dsn: str, max_connections: int = 10) -> None:\n        \"\"\"Initialize connection pool parameters.\"\"\"\n        self.dsn = dsn\n        self.max_connections = max_connections\n\n    def connect(self, timeout: float = 30.0, retry: bool = True) -> bool:\n        \"\"\"Establish pooled connection with configurable timeout.\"\"\"\n        if timeout <= 0:\n            raise ValueError(\"Timeout must be positive\")\n        return True\n"
+  },
+  {
+    "id": "task_03",
+    "task_intent": "View available methods and docstrings in TokenCache",
+    "target_symbol": "TokenCache",
+    "category": "interface_only",
+    "requires_full_body": false,
+    "ground_truth_tier": 1,
+    "description": "Developer browses class structure to learn what caching methods exist.",
+    "code_snippet": "\"\"\"Token cache storage.\"\"\"\n\nfrom typing import Optional\n\nclass TokenCache:\n    \"\"\"Thread-safe in-memory cache for bearer tokens.\"\"\"\n\n    def __init__(self, ttl_seconds: int = 3600) -> None:\n        \"\"\"Initialize cache with TTL expiration.\"\"\"\n        self.ttl = ttl_seconds\n        self._store: dict[str, str] = {}\n\n    def get(self, key: str) -> Optional[str]:\n        \"\"\"Retrieve token by key if not expired.\"\"\"\n        return self._store.get(key)\n\n    def set(self, key: str, token: str) -> None:\n        \"\"\"Save token with expiration timestamp.\"\"\"\n        self._store[key] = token\n"
+  },
+  {
+    "id": "task_04",
+    "task_intent": "Verify function signature and arguments for format_metric_log",
+    "target_symbol": "format_metric_log",
+    "category": "interface_only",
+    "requires_full_body": false,
+    "ground_truth_tier": 1,
+    "description": "Developer checks logging format function arguments before invoking.",
+    "code_snippet": "\"\"\"Metrics logging helper.\"\"\"\n\ndef format_metric_log(metric_name: str, value: float, unit: str = \"ms\") -> str:\n    \"\"\"Format raw telemetry metrics into standardized JSON log entry.\"\"\"\n    import json\n    return json.dumps({\"name\": metric_name, \"value\": value, \"unit\": unit})\n"
+  },
+  {
+    "id": "task_05",
+    "task_intent": "Check what exceptions parse_header raises and its parameter list",
+    "target_symbol": "parse_header",
+    "category": "interface_only",
+    "requires_full_body": false,
+    "ground_truth_tier": 1,
+    "description": "Developer checks raised exceptions and arguments to write error handling wrapper.",
+    "code_snippet": "\"\"\"HTTP header parser.\"\"\"\n\ndef parse_header(raw_line: str) -> tuple[str, str]:\n    \"\"\"Parse an HTTP header line into a key-value pair. Raises ValueError on malformed line.\"\"\"\n    if \":\" not in raw_line:\n        raise ValueError(\"Malformed header line: missing colon\")\n    key, val = raw_line.split(\":\", 1)\n    return key.strip(), val.strip()\n"
+  },
+  {
+    "id": "task_06",
+    "task_intent": "Refactor validate_session to accept an optional permissions list",
+    "target_symbol": "validate_session",
+    "category": "interface_only",
+    "requires_full_body": false,
+    "ground_truth_tier": 2,
+    "description": "Developer refactors session validation signature and needs to trace caller dependencies.",
+    "code_snippet": "\"\"\"Session validation and authentication gateway.\"\"\"\n\ndef validate_session(session_id: str) -> bool:\n    \"\"\"Validate active session token.\"\"\"\n    if not session_id or len(session_id) < 16:\n        return False\n    return True\n\ndef handle_login(session_id: str) -> dict:\n    \"\"\"Handle user login route.\"\"\"\n    if not validate_session(session_id):\n        raise PermissionError(\"Invalid session\")\n    return {\"status\": \"ok\"}\n\ndef handle_request(session_id: str, path: str) -> dict:\n    \"\"\"Handle authenticated API request.\"\"\"\n    if not validate_session(session_id):\n        raise PermissionError(\"Access denied\")\n    return {\"path\": path}\n"
+  },
+  {
+    "id": "task_07",
+    "task_intent": "Trace callers and callees of normalize_payload",
+    "target_symbol": "normalize_payload",
+    "category": "interface_only",
+    "requires_full_body": false,
+    "ground_truth_tier": 2,
+    "description": "Developer investigates data transformation pipeline call sites.",
+    "code_snippet": "\"\"\"Payload normalization pipeline.\"\"\"\n\ndef sanitize_chars(text: str) -> str:\n    \"\"\"Remove non-printable characters.\"\"\"\n    return \"\".join(c for c in text if c.isprintable())\n\ndef normalize_payload(raw: dict) -> dict:\n    \"\"\"Normalize dictionary payload strings.\"\"\"\n    cleaned = {}\n    for k, v in raw.items():\n        if isinstance(v, str):\n            cleaned[k] = sanitize_chars(v)\n        else:\n            cleaned[k] = v\n    return cleaned\n\ndef process_inbound_webhook(payload: dict) -> bool:\n    \"\"\"Process incoming webhook.\"\"\"\n    norm = normalize_payload(payload)\n    return bool(norm)\n"
+  },
+  {
+    "id": "task_08",
+    "task_intent": "Rename dispatch_event method and check affected call sites",
+    "target_symbol": "EventBus.dispatch_event",
+    "category": "interface_only",
+    "requires_full_body": false,
+    "ground_truth_tier": 2,
+    "description": "Developer renames event emission method and verifies dependent callers.",
+    "code_snippet": "\"\"\"Event bus broker.\"\"\"\n\nclass EventBus:\n    \"\"\"Dispatches messages across subscribers.\"\"\"\n\n    def __init__(self) -> None:\n        \"\"\"Initialize handler mapping.\"\"\"\n        self._subscribers: dict[str, list] = {}\n\n    def dispatch_event(self, event_name: str, data: dict) -> int:\n        \"\"\"Emit event to all registered listener callbacks.\"\"\"\n        handlers = self._subscribers.get(event_name, [])\n        for h in handlers:\n            h(data)\n        return len(handlers)\n\ndef notify_order_placed(bus: EventBus, order_id: int) -> None:\n    \"\"\"Trigger order placement notification.\"\"\"\n    bus.dispatch_event(\"order.placed\", {\"id\": order_id})\n"
+  },
+  {
+    "id": "task_09",
+    "task_intent": "Deprecate legacy fetch_user function and verify downstream dependents",
+    "target_symbol": "fetch_user",
+    "category": "interface_only",
+    "requires_full_body": false,
+    "ground_truth_tier": 2,
+    "description": "Developer plans deprecation of old user query function by inspecting callers.",
+    "code_snippet": "\"\"\"User repository access.\"\"\"\n\ndef fetch_user(user_id: int) -> dict:\n    \"\"\"Fetch user record by ID (deprecated: use fetch_user_v2).\"\"\"\n    return {\"id\": user_id, \"name\": \"User\"}\n\ndef render_user_profile(user_id: int) -> str:\n    \"\"\"Render HTML profile view.\"\"\"\n    user = fetch_user(user_id)\n    return f\"Profile: {user['name']}\"\n\ndef check_account_status(user_id: int) -> bool:\n    \"\"\"Verify account status.\"\"\"\n    user = fetch_user(user_id)\n    return user.get(\"active\", True)\n"
+  },
+  {
+    "id": "task_10",
+    "task_intent": "Patch sanitize_query signature and analyze dependency call graph",
+    "target_symbol": "sanitize_query",
+    "category": "interface_only",
+    "requires_full_body": false,
+    "ground_truth_tier": 2,
+    "description": "Developer analyzes call graph before patching SQL query sanitization function.",
+    "code_snippet": "\"\"\"SQL query safety utilities.\"\"\"\n\ndef sanitize_query(sql: str) -> str:\n    \"\"\"Sanitize SQL query input string.\"\"\"\n    return sql.replace(\";\", \"\")\n\ndef execute_safe_query(sql: str) -> list:\n    \"\"\"Execute sanitized SQL query.\"\"\"\n    clean = sanitize_query(sql)\n    return [clean]\n\ndef export_report(sql: str) -> str:\n    \"\"\"Run report query.\"\"\"\n    clean = sanitize_query(sql)\n    return f\"Report for: {clean}\"\n"
+  },
+  {
+    "id": "task_11",
+    "task_intent": "Rewrite financial transaction processing algorithm to prevent race condition",
+    "target_symbol": "TransactionProcessor.process",
+    "category": "deep_logic_rewrite",
+    "requires_full_body": true,
+    "ground_truth_tier": 3,
+    "description": "Developer must rewrite concurrent balance checks and locking logic.",
+    "code_snippet": "\"\"\"Financial transaction processor.\"\"\"\n\nclass TransactionProcessor:\n    \"\"\"Executes financial ledger updates with retry logic.\"\"\"\n\n    def __init__(self, balance: float) -> None:\n        \"\"\"Initialize ledger with starting balance.\"\"\"\n        self.balance = balance\n\n    def process(self, amount: float, account_id: str, allow_overdraft: bool = False) -> bool:\n        \"\"\"Execute financial transaction with validation, branching, and retries.\"\"\"\n        if amount <= 0:\n            raise ValueError(\"Amount must be positive\")\n        if not account_id:\n            raise ValueError(\"Missing account ID\")\n        \n        if self.balance < amount and not allow_overdraft:\n            return False\n            \n        attempts = 0\n        while attempts < 3:\n            try:\n                current = self.balance\n                if current >= amount or allow_overdraft:\n                    self.balance = current - amount\n                    return True\n                attempts += 1\n            except Exception:\n                attempts += 1\n        return False\n"
+  },
+  {
+    "id": "task_12",
+    "task_intent": "Fix off-by-one index error in binary_search algorithm loop",
+    "target_symbol": "binary_search",
+    "category": "deep_logic_rewrite",
+    "requires_full_body": true,
+    "ground_truth_tier": 3,
+    "description": "Developer must debug the exact index calculation inside binary search.",
+    "code_snippet": "\"\"\"Search algorithm module.\"\"\"\n\ndef binary_search(arr: list[int], target: int) -> int:\n    \"\"\"Perform binary search on sorted array; returns index or -1.\"\"\"\n    low = 0\n    high = len(arr) - 1\n    while low <= high:\n        mid = (low + high) // 2\n        val = arr[mid]\n        if val == target:\n            return mid\n        elif val < target:\n            low = mid + 1\n        else:\n            high = mid - 1\n    return -1\n"
+  },
+  {
+    "id": "task_13",
+    "task_intent": "Debug and resolve recursive memory leak in traverse_ast logic",
+    "target_symbol": "traverse_ast",
+    "category": "deep_logic_rewrite",
+    "requires_full_body": true,
+    "ground_truth_tier": 3,
+    "description": "Developer must inspect recursive calls and visited set mutations to fix memory leak.",
+    "code_snippet": "\"\"\"Tree traversal engine.\"\"\"\n\ndef traverse_ast(node: dict, visited: list | None = None) -> list[str]:\n    \"\"\"Recursively collect AST node identifiers with circular reference safety.\"\"\"\n    if visited is None:\n        visited = []\n    if id(node) in visited:\n        return []\n    visited.append(id(node))\n    names = [node.get(\"name\", \"\")]\n    for child in node.get(\"children\", []):\n        if isinstance(child, dict):\n            names.extend(traverse_ast(child, visited))\n    return [n for n in names if n]\n"
+  },
+  {
+    "id": "task_14",
+    "task_intent": "Reimplement encryption key derivation logic with constant-time comparison",
+    "target_symbol": "derive_key",
+    "category": "deep_logic_rewrite",
+    "requires_full_body": true,
+    "ground_truth_tier": 3,
+    "description": "Developer must rewrite PBKDF2 iteration loop to eliminate side-channel vulnerabilities.",
+    "code_snippet": "\"\"\"Key derivation routines.\"\"\"\n\nimport hashlib\n\ndef derive_key(password: str, salt: bytes, iterations: int = 100000) -> bytes:\n    \"\"\"Derive cryptographic key using iterative hashing algorithm.\"\"\"\n    if iterations < 1000:\n        raise ValueError(\"Insufficient iterations for security\")\n    derived = password.encode('utf-8')\n    for _ in range(iterations):\n        derived = hashlib.sha256(derived + salt).digest()\n    return derived\n"
+  },
+  {
+    "id": "task_15",
+    "task_intent": "Fix crash caused by unhandled ZeroDivisionError in compute_ratios pipeline",
+    "target_symbol": "compute_ratios",
+    "category": "deep_logic_rewrite",
+    "requires_full_body": true,
+    "ground_truth_tier": 3,
+    "description": "Developer must modify the internal mathematical division loop to handle zero denominators.",
+    "code_snippet": "\"\"\"Ratio computation pipeline.\"\"\"\n\ndef compute_ratios(numerators: list[float], denominators: list[float]) -> list[float]:\n    \"\"\"Compute pairwise division ratios with edge case handling.\"\"\"\n    if len(numerators) != len(denominators):\n        raise ValueError(\"Mismatched array lengths\")\n    results = []\n    for n, d in zip(numerators, denominators):\n        if d == 0:\n            results.append(0.0)\n        else:\n            results.append(n / d)\n    return results\n"
+  },
+  {
+    "id": "task_16",
+    "task_intent": "Optimize sorting algorithm implementation to handle large stream datasets",
+    "target_symbol": "merge_stream",
+    "category": "deep_logic_rewrite",
+    "requires_full_body": true,
+    "ground_truth_tier": 3,
+    "description": "Developer must rewrite the inner loop into a min-heap priority queue merge.",
+    "code_snippet": "\"\"\"Stream sorting utilities.\"\"\"\n\ndef merge_stream(left: list[int], right: list[int]) -> list[int]:\n    \"\"\"Merge two pre-sorted lists into a single sorted list.\"\"\"\n    merged = []\n    i = 0\n    j = 0\n    while i < len(left) and j < len(right):\n        if left[i] <= right[j]:\n            merged.append(left[i])\n            i += 1\n        else:\n            merged.append(right[j])\n            j += 1\n    merged.extend(left[i:])\n    merged.extend(right[j:])\n    return merged\n"
+  },
+  {
+    "id": "task_17",
+    "task_intent": "Overhaul async retry backoff loop with exponential jitter logic",
+    "target_symbol": "retry_with_backoff",
+    "category": "deep_logic_rewrite",
+    "requires_full_body": true,
+    "ground_truth_tier": 3,
+    "description": "Developer must rewrite the retry backoff calculation to add randomized full jitter.",
+    "code_snippet": "\"\"\"Async retry controller.\"\"\"\n\nimport asyncio\nimport random\nfrom typing import Callable, Any\n\nasync def retry_with_backoff(func: Callable[[], Any], max_retries: int = 5, base_delay: float = 0.5) -> Any:\n    \"\"\"Execute async function with exponential retry backoff logic.\"\"\"\n    for attempt in range(max_retries):\n        try:\n            return await func()\n        except Exception as exc:\n            if attempt == max_retries - 1:\n                raise exc\n            delay = base_delay * (2 ** attempt) + random.uniform(0, 0.1)\n            await asyncio.sleep(delay)\n"
+  },
+  {
+    "id": "task_18",
+    "task_intent": "Rewrite token bucket rate limiter logic to handle burst traffic",
+    "target_symbol": "RateLimiter.consume",
+    "category": "deep_logic_rewrite",
+    "requires_full_body": true,
+    "ground_truth_tier": 3,
+    "description": "Developer must overhaul the token leakage and replenish algorithm.",
+    "code_snippet": "\"\"\"Token bucket rate limiter.\"\"\"\n\nimport time\n\nclass RateLimiter:\n    \"\"\"Token bucket algorithm for rate-limiting requests.\"\"\"\n\n    def __init__(self, capacity: int, refill_rate: float) -> None:\n        \"\"\"Initialize bucket capacity and refill rate in tokens/sec.\"\"\"\n        self.capacity = capacity\n        self.refill_rate = refill_rate\n        self.tokens = float(capacity)\n        self.last_refill = time.time()\n\n    def consume(self, tokens_requested: int = 1) -> bool:\n        \"\"\"Attempt to consume tokens from bucket, replenishing if elapsed.\"\"\"\n        now = time.time()\n        elapsed = now - self.last_refill\n        self.tokens = min(float(self.capacity), self.tokens + elapsed * self.refill_rate)\n        self.last_refill = now\n        \n        if self.tokens >= tokens_requested:\n            self.tokens -= tokens_requested\n            return True\n        return False\n"
+  },
+  {
+    "id": "task_19",
+    "task_intent": "Fix state corruption bug in event dispatcher dispatch loop",
+    "target_symbol": "Dispatcher.dispatch",
+    "category": "deep_logic_rewrite",
+    "requires_full_body": true,
+    "ground_truth_tier": 3,
+    "description": "Developer must rewrite queue polling and event dispatch lock handling.",
+    "code_snippet": "\"\"\"Stateful event dispatcher.\"\"\"\n\nclass Dispatcher:\n    \"\"\"Handles asynchronous message dispatching.\"\"\"\n\n    def __init__(self) -> None:\n        \"\"\"Initialize empty queue.\"\"\"\n        self.queue: list[dict] = []\n        self.processed: set[str] = set()\n\n    def dispatch(self, batch_size: int = 10) -> int:\n        \"\"\"Drain and dispatch pending queue events with idempotency check.\"\"\"\n        dispatched_count = 0\n        while self.queue and dispatched_count < batch_size:\n            item = self.queue.pop(0)\n            msg_id = item.get(\"id\", \"\")\n            if msg_id and msg_id not in self.processed:\n                self.processed.add(msg_id)\n                dispatched_count += 1\n        return dispatched_count\n"
+  },
+  {
+    "id": "task_20",
+    "task_intent": "Implement algorithmic fix for deadlock in worker pool synchronization",
+    "target_symbol": "WorkerPool.execute_job",
+    "category": "deep_logic_rewrite",
+    "requires_full_body": true,
+    "ground_truth_tier": 3,
+    "description": "Developer must rewrite synchronization and job acquisition logic to prevent deadlocks.",
+    "code_snippet": "\"\"\"Worker pool synchronizer.\"\"\"\n\nimport threading\nfrom typing import Callable, Any\n\nclass WorkerPool:\n    \"\"\"Thread pool with synchronization locks.\"\"\"\n\n    def __init__(self, size: int = 4) -> None:\n        \"\"\"Initialize pool with thread locks.\"\"\"\n        self.size = size\n        self.lock = threading.Lock()\n        self.active_jobs = 0\n\n    def execute_job(self, job_fn: Callable[[], Any]) -> Any:\n        \"\"\"Execute job under lock synchronization with deadlock prevention.\"\"\"\n        with self.lock:\n            if self.active_jobs >= self.size:\n                raise RuntimeError(\"Worker pool exhausted\")\n            self.active_jobs += 1\n        try:\n            return job_fn()\n        finally:\n            with self.lock:\n                self.active_jobs -= 1\n"
+  }
+]
