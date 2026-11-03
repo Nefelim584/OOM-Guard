@@ -11,6 +11,7 @@ from acc_mcp.server import create_server
 @pytest.fixture(autouse=True)
 def workspace_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ACC_MCP_ROOT", str(tmp_path))
+    monkeypatch.delenv("ACC_MCP_SESSION_BUDGET", raising=False)
     return tmp_path
 
 
@@ -69,7 +70,8 @@ async def test_mcp_tool_discovery(temp_ledger: Path):
     assert "get_adaptive_context" in tool_names
     assert "get_token_ledger" in tool_names
     assert "find_symbol" in tool_names
-    assert len(tools) >= 3
+    assert "reset_session" in tool_names
+    assert len(tools) >= 4
 
     # Check tool schemas
     context_tool = next(t for t in tools if t.name == "get_adaptive_context")
@@ -468,3 +470,158 @@ async def test_min_tier_clamped_to_valid_range(sample_source_file: Path, temp_le
     record = data["history"][0]
     assert record["served_tier"] == 3
     assert record["requested_min_tier"] == 3
+
+
+# ---------------------------------------------------------------------------
+# 7. Session Budget Drives Tier Selection (Steps 19.2 - 19.4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def long_function_file(tmp_path: Path) -> Path:
+    """A function whose Tier 3 body is far larger than its Tier 2 skeleton."""
+    file_path = tmp_path / "long_routine.py"
+    steps = "".join(f"    total += values[{i}] * {i}  # step {i}\n" for i in range(60))
+    file_path.write_text(
+        "def long_routine(values: list[int]) -> int:\n"
+        '    """Combine values through many weighted steps."""\n'
+        "    total = 0\n"
+        f"{steps}"
+        "    return total\n",
+        encoding="utf-8",
+    )
+    return file_path
+
+
+REWRITE_ARGS = {"task_intent": "Rewrite the body of long_routine", "symbol_name": "long_routine"}
+
+
+async def serve_full_tier3(server, file_path: Path) -> tuple[str, int]:
+    """Serve the Tier 3 slice with a fresh budget; return its text and token count."""
+    result = await server.call_tool(
+        "get_adaptive_context", {"file_path": str(file_path), **REWRITE_ARGS}
+    )
+    record = server.budget_tracker.history[-1]
+    assert record.served_tier == 3
+    server.budget_tracker.reset_session()
+    return result.content[0].text, record.served_tokens
+
+
+@pytest.mark.asyncio
+async def test_tier_steps_down_when_session_budget_is_low(long_function_file: Path, temp_ledger: Path):
+    """Verify a Tier 3 slice that does not fit the remaining budget is served as Tier 2 with a note."""
+    server = create_server(ledger_path=temp_ledger)
+    tracker = server.budget_tracker
+    _, full_tokens = await serve_full_tier3(server, long_function_file)
+
+    remaining = full_tokens - 1
+    tracker.session_served_tokens = tracker.session_budget - remaining
+    result = await server.call_tool(
+        "get_adaptive_context", {"file_path": str(long_function_file), **REWRITE_ARGS}
+    )
+    text = result.content[0].text
+
+    assert text.startswith(
+        f"# [ACC-MCP] Served Tier 2 instead of Tier 3: only {remaining} of the "
+        f"6000-token session budget is left; call reset_session"
+    )
+    assert "Tier 2 Context" in text
+    assert "# step 0" not in text
+
+    record = tracker.history[-1]
+    assert (record.model_tier, record.served_tier, record.budget_limited) == (3, 2, True)
+    assert record.served_tokens <= remaining
+    assert tracker.remaining_session_tokens == remaining - record.served_tokens
+
+
+@pytest.mark.asyncio
+async def test_forced_min_tier_that_does_not_fit_is_refused(long_function_file: Path, temp_ledger: Path):
+    """Verify min_tier=3 over budget returns a clear message instead of a silently cut slice."""
+    server = create_server(ledger_path=temp_ledger)
+    tracker = server.budget_tracker
+    _, full_tokens = await serve_full_tier3(server, long_function_file)
+
+    remaining = full_tokens - 1
+    tracker.session_served_tokens = tracker.session_budget - remaining
+    result = await server.call_tool(
+        "get_adaptive_context",
+        {
+            "file_path": str(long_function_file),
+            "task_intent": "Check long_routine signature",
+            "symbol_name": "long_routine",
+            "min_tier": 3,
+        },
+    )
+    text = result.content[0].text
+
+    assert result.is_error is False
+    assert text.startswith(
+        f"# [ACC-MCP] Not served: the Tier 3 slice needs about {full_tokens} tokens, "
+        f"but only {remaining} of the 6000-token session budget is left."
+    )
+    assert "total +=" not in text
+    assert tracker.total_requests == 1
+    assert tracker.remaining_session_tokens == remaining
+
+
+@pytest.mark.asyncio
+async def test_reset_session_restores_budget(long_function_file: Path, temp_ledger: Path):
+    """Verify an exhausted budget refuses slices and reset_session brings back the full Tier 3."""
+    server = create_server(ledger_path=temp_ledger)
+    tracker = server.budget_tracker
+    full_text, _ = await serve_full_tier3(server, long_function_file)
+
+    tracker.session_served_tokens = tracker.session_budget
+    exhausted = await server.call_tool(
+        "get_adaptive_context", {"file_path": str(long_function_file), **REWRITE_ARGS}
+    )
+    assert exhausted.content[0].text.startswith(
+        "# [ACC-MCP] Not served: the 6000-token session budget is used up (0 tokens left)."
+    )
+
+    reset = json.loads((await server.call_tool("reset_session", {})).content[0].text)
+    assert reset["previous_session_served_tokens"] == 6000
+    assert reset["session_remaining_tokens"] == 6000
+
+    again = await server.call_tool(
+        "get_adaptive_context", {"file_path": str(long_function_file), **REWRITE_ARGS}
+    )
+    assert again.content[0].text == full_text
+    assert tracker.history[-1].budget_limited is False
+
+    ledger = json.loads((await server.call_tool("get_token_ledger", {})).content[0].text)
+    assert ledger["summary"]["total_requests"] == 2
+    assert ledger["summary"]["session_requests"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ledger_saved_once_per_request(
+    sample_source_file: Path, temp_ledger: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Verify a request writes the ledger once, also when it is the one that indexes the workspace."""
+    server = create_server(ledger_path=temp_ledger)
+    tracker = server.budget_tracker
+    saves: list[Path | None] = []
+    real_save = tracker.save_ledger
+
+    def counting_save(target_path=None):
+        saves.append(target_path)
+        real_save(target_path)
+
+    monkeypatch.setattr(tracker, "save_ledger", counting_save)
+    args = {
+        "file_path": str(sample_source_file),
+        "task_intent": "Check calculate_hash signature",
+        "symbol_name": "calculate_hash",
+    }
+
+    await server.call_tool("get_adaptive_context", args)
+    assert len(saves) == 1
+    assert tracker.is_file_cached(str(sample_source_file.resolve()))
+
+    await server.call_tool("get_adaptive_context", args)
+    assert len(saves) == 2
+
+    restarted = create_server(ledger_path=temp_ledger)
+    assert restarted.budget_tracker.total_requests == 2
+    assert restarted.budget_tracker.is_file_cached(str(sample_source_file.resolve()))

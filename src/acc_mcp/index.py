@@ -38,6 +38,11 @@ class IndexStats:
     files_reused: int = 0
     files_removed: int = 0
 
+    @property
+    def changed(self) -> bool:
+        """True when the symbol cache was modified and the ledger needs saving."""
+        return bool(self.files_parsed or self.files_removed)
+
 
 class WorkspaceIndex:
     """Symbol map of every servable `.py` file under the workspace root.
@@ -93,8 +98,11 @@ class WorkspaceIndex:
                 found.setdefault(self.guard.resolve_path(relative), None)
         return list(found)
 
-    def refresh(self) -> IndexStats:
-        """Re-parse new and changed files, reuse unchanged ones, drop deleted ones."""
+    def refresh(self, save: bool = True) -> IndexStats:
+        """Re-parse new and changed files, reuse unchanged ones, drop deleted ones.
+
+        Pass save=False when the caller saves the ledger itself later in the same request.
+        """
         stats = IndexStats()
         files = self.iter_source_files()
         seen = {str(path) for path in files}
@@ -127,11 +135,10 @@ class WorkspaceIndex:
                 self.tracker.forget_symbols(key, save=False)
                 stats.files_removed += 1
 
-        changed = bool(stats.files_parsed or stats.files_removed)
-        if changed and self.tracker.auto_save:
+        if stats.changed and save and self.tracker.auto_save:
             self.tracker.save_ledger()
 
-        if changed or files != self._files:
+        if stats.changed or files != self._files:
             self._modules = None
             self._symbol_maps.clear()
             self._callers = None

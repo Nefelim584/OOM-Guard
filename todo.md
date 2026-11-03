@@ -146,10 +146,10 @@
 
 ## Phase 19: Session Budget That Actually Limits Context (Block 5)
 *Feature: Make the budget control what is served, not only log it. Today the 2,000-token ceiling applies to one slice, but nothing stops ten slices from filling an 8k window.*
-- [ ] Step 19.1: Track the running total of tokens served in the current session against a configurable session budget (e.g. 6,000 tokens for ACC-MCP output inside an 8k window). The server only sees its own output, so this is a share of the window, not the whole window.
-- [ ] Step 19.2: Pass the remaining budget into tier selection: if the chosen tier does not fit, step down one tier and say so in the slice header; the ceiling becomes `min(C_max, remaining)`. If `min_tier` asks for more than fits, return a clear message instead of silently cutting.
-- [ ] Step 19.3: Add a `reset_session` tool so a new Pi task starts with a fresh budget, and save the ledger once per request instead of twice (now both `cache_symbols` and `record_retrieval` rewrite the whole file); keep only the last N history records while keeping the totals.
-- [ ] Step 19.4: Write tests in `tests/test_budget.py` and `tests/test_server.py` for: tier steps down when the budget is low, `reset_session` restores the budget, one save per request, history cap keeps correct totals.
+- [x] Step 19.1: Track the running total of tokens served in the current session against a configurable session budget (e.g. 6,000 tokens for ACC-MCP output inside an 8k window). The server only sees its own output, so this is a share of the window, not the whole window.
+- [x] Step 19.2: Pass the remaining budget into tier selection: if the chosen tier does not fit, step down one tier and say so in the slice header; the ceiling becomes `min(C_max, remaining)`. If `min_tier` asks for more than fits, return a clear message instead of silently cutting.
+- [x] Step 19.3: Add a `reset_session` tool so a new Pi task starts with a fresh budget, and save the ledger once per request instead of twice (now both `cache_symbols` and `record_retrieval` rewrite the whole file); keep only the last N history records while keeping the totals.
+- [x] Step 19.4: Write tests in `tests/test_budget.py` and `tests/test_server.py` for: tier steps down when the budget is low, `reset_session` restores the budget, one save per request, history cap keeps correct totals.
 - [ ] Step 19.5: Run the full test suite and suggest commit name: `feat(budget): make session budget drive tier selection`.
 
 ## Phase 20: Decision Model Quick Fixes and Honest Reporting (Block 4)

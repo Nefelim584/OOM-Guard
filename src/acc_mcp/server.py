@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,16 +30,116 @@ logger = logging.getLogger(__name__)
 FIND_SYMBOL_LIMIT = 50
 
 
+@dataclass
+class BudgetedSlice:
+    """A slice fitted into the session budget; tier is None when nothing was served."""
+
+    text: str
+    tier: int | None
+    budget_limited: bool = False
+
+
+def _render_tier(
+    parser: ASTParser,
+    guard: GuardRail,
+    tier: int,
+    symbol_name: str | None,
+    ceiling: int,
+) -> str:
+    """Slice at the given tier, cut to the token ceiling."""
+    if tier == 1:
+        raw = parser.get_tier1_context(symbol_name=symbol_name)
+    elif tier == 2:
+        raw = parser.get_tier2_context(symbol_name=symbol_name)
+    else:
+        raw = parser.get_tier3_context(
+            symbol_name=symbol_name,
+            max_tokens=ceiling,
+            token_counter=guard.token_counter,
+        )
+    return guard.enforce_ceiling(raw, max_tokens=ceiling)
+
+
+def _budget_note(tier: int, wanted_tier: int, remaining: int, budget: int) -> str:
+    """Header line saying the session budget lowered or cut this slice."""
+    if tier < wanted_tier:
+        what = f"Served Tier {tier} instead of Tier {wanted_tier}"
+    else:
+        what = f"Tier {tier} slice cut to fit"
+    return (
+        f"# [ACC-MCP] {what}: only {remaining} of the {budget}-token session budget is left; "
+        f"call reset_session when you start a new task\n"
+    )
+
+
+def fit_session_budget(
+    parser: ASTParser,
+    guard: GuardRail,
+    tracker: ContextBudgetTracker,
+    wanted_tier: int,
+    min_tier: int | None,
+    symbol_name: str | None,
+) -> BudgetedSlice:
+    """Serve wanted_tier if it fits the remaining session budget, otherwise one tier lower.
+
+    The ceiling for a slice is min(C_max, remaining). The lower tier is cut to that ceiling
+    if needed, but a tier the agent asked for with min_tier is never cut: a message saying
+    what does not fit is returned instead.
+    """
+    count = guard.token_counter.count_tokens
+    remaining = tracker.remaining_session_tokens
+    budget = tracker.session_budget
+
+    sliced = _render_tier(parser, guard, wanted_tier, symbol_name, guard.max_tokens)
+    if count(sliced) <= remaining:
+        return BudgetedSlice(sliced, wanted_tier)
+
+    tier = wanted_tier - 1 if wanted_tier > (min_tier or 1) else wanted_tier
+    note = _budget_note(tier, wanted_tier, remaining, budget)
+    if tier < wanted_tier:
+        sliced = _render_tier(parser, guard, tier, symbol_name, guard.max_tokens)
+        if count(note + sliced) <= remaining:
+            return BudgetedSlice(note + sliced, tier, budget_limited=True)
+
+    if min_tier is not None and min_tier > 1 and tier == min_tier:
+        return BudgetedSlice(
+            f"# [ACC-MCP] Not served: the Tier {tier} slice needs about {count(sliced)} tokens, "
+            f"but only {remaining} of the {budget}-token session budget is left. Retry with a "
+            f"lower min_tier or a narrower symbol_name, or call reset_session if you are "
+            f"starting a new task.\n",
+            None,
+        )
+
+    limit = min(guard.max_tokens, remaining - count(note))
+    if limit > 0:
+        cut = note + _render_tier(parser, guard, tier, symbol_name, limit)
+        if count(cut) <= remaining:
+            return BudgetedSlice(cut, tier, budget_limited=True)
+
+    return BudgetedSlice(
+        f"# [ACC-MCP] Not served: the {budget}-token session budget is used up "
+        f"({remaining} tokens left). Work with the slices you already have, or call "
+        f"reset_session if you are starting a new task.\n",
+        None,
+    )
+
+
 def create_server(
     ledger_path: str | Path | None = None,
     max_tokens: int = GuardRail.DEFAULT_MAX_TOKENS,
     token_counter: TokenCounter | None = None,
     workspace_root: str | Path | None = None,
+    session_budget: int | None = None,
+    history_limit: int = ContextBudgetTracker.DEFAULT_HISTORY_LIMIT,
 ) -> MCPServer:
     """Create and configure an ACC-MCP server instance exposing context tools.
 
     Only `.py` files inside `workspace_root` are served. When it is not given, the
     `ACC_MCP_ROOT` env var is used, then the current working directory.
+
+    `session_budget` caps the tokens served per session (default: `ACC_MCP_SESSION_BUDGET`
+    env var, then 6,000). It is a share of the agent's window, since the server only sees
+    its own output.
     """
     server = MCPServer(
         name="acc-mcp",
@@ -59,6 +160,8 @@ def create_server(
         ledger_path=ledger_path,
         auto_save=True,
         token_counter=token_counter,
+        session_budget=session_budget,
+        history_limit=history_limit,
     )
     workspace_index = WorkspaceIndex(guard=guard, tracker=budget_tracker)
 
@@ -92,6 +195,12 @@ def create_server(
         exact search-and-replace edits. If a slice is cut to fit the token ceiling, a
         `# [ACC-MCP] lines a-b omitted` note says what is missing and how to get it.
 
+        All slices in a session share a fixed token budget (see get_token_ledger). When
+        too little is left, the slice is served one tier lower with a `# [ACC-MCP] Served
+        Tier n instead of Tier m` note, and a tier forced with min_tier that does not fit
+        is refused with a `# [ACC-MCP] Not served` message. Call reset_session at the start
+        of every new task.
+
         Args:
             file_path: Path to a `.py` file inside the workspace root (relative paths
                        are taken from the root).
@@ -111,7 +220,7 @@ def create_server(
         file_content = path_obj.read_text(encoding="utf-8")
 
         # 3. Bring the workspace symbol cache up to date, parse the file, and add callers from other files
-        workspace_index.refresh()
+        index_stats = workspace_index.refresh(save=False)
         parser = ASTParser(
             file_content,
             file_path=str(path_obj),
@@ -128,38 +237,37 @@ def create_server(
 
         # 5. Apply min_tier escalation (never lower the model's choice)
         effective_min_tier = max(1, min(3, min_tier)) if min_tier is not None else None
-        served_tier = decision.tier
-        if effective_min_tier is not None and effective_min_tier > served_tier:
-            served_tier = effective_min_tier
+        wanted_tier = max(decision.tier, effective_min_tier or 1)
 
-        # 6. Extract structural context slice at served tier
-        if served_tier == 1:
-            raw_context = parser.get_tier1_context(symbol_name=symbol_name)
-        elif served_tier == 2:
-            raw_context = parser.get_tier2_context(symbol_name=symbol_name)
-        else:
-            raw_context = parser.get_tier3_context(
-                symbol_name=symbol_name,
-                max_tokens=guard.max_tokens,
-                token_counter=guard.token_counter,
-            )
+        # 6. Extract the slice under min(C_max, remaining session budget), stepping down a tier if needed
+        served = fit_session_budget(
+            parser=parser,
+            guard=guard,
+            tracker=budget_tracker,
+            wanted_tier=wanted_tier,
+            min_tier=effective_min_tier,
+            symbol_name=symbol_name,
+        )
 
-        # 7. Enforce deterministic token ceiling
-        final_context = guard.enforce_ceiling(raw_context)
+        # 7. Save the ledger once per request: record_retrieval saves it, a refusal only if the index changed
+        if served.tier is None:
+            if index_stats.changed and budget_tracker.auto_save:
+                budget_tracker.save_ledger()
+            return served.text
 
-        # 8. Record multi-turn token accounting with escalation metadata
         budget_tracker.record_retrieval(
             file_path=str(path_obj),
             task_intent=task_intent,
-            served_tier=served_tier,
+            served_tier=served.tier,
             baseline_content=file_content,
-            served_content=final_context,
+            served_content=served.text,
             symbol_name=symbol_name,
             requested_min_tier=effective_min_tier,
             model_tier=decision.tier,
+            budget_limited=served.budget_limited,
         )
 
-        return final_context
+        return served.text
 
     @server.tool()
     async def find_symbol(name: str) -> str:
@@ -186,11 +294,32 @@ def create_server(
 
     @server.tool()
     async def get_token_ledger() -> str:
-        """Retrieve the cumulative session token audit log and savings ledger."""
+        """Retrieve the cumulative session token audit log and savings ledger.
+
+        `summary` has all-time totals plus the current session budget (`session_budget`,
+        `session_served_tokens`, `session_remaining_tokens`). `history` holds only the most
+        recent `history_limit` requests.
+        """
         payload = {
             "summary": budget_tracker.get_summary(),
             "history": [r.to_dict() for r in budget_tracker.history],
         }
+        return json.dumps(payload, indent=2)
+
+    @server.tool()
+    async def reset_session() -> str:
+        """Start a fresh session token budget. Call this once at the start of each new task.
+
+        Slices served earlier no longer count against the budget. All-time totals and the
+        history in get_token_ledger are kept.
+        """
+        payload = {
+            "previous_session_served_tokens": budget_tracker.session_served_tokens,
+            "previous_session_requests": budget_tracker.session_requests,
+        }
+        budget_tracker.reset_session()
+        payload["session_budget"] = budget_tracker.session_budget
+        payload["session_remaining_tokens"] = budget_tracker.remaining_session_tokens
         return json.dumps(payload, indent=2)
 
     return server

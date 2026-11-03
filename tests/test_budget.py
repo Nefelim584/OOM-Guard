@@ -226,3 +226,107 @@ def test_restart_recovery_preserves_statistics_and_symbol_cache(
     assert tx_info is not None
     assert tx_info.cyclomatic_complexity >= 6
     assert "validate_user" in tx_info.callees
+
+
+# ---------------------------------------------------------------------------
+# 4. Session Budget and History Cap (Steps 19.1, 19.3 & 19.4)
+# ---------------------------------------------------------------------------
+
+
+def record_n(tracker: ContextBudgetTracker, n: int) -> list[RetrievalRecord]:
+    """Record n retrievals of growing size, cycling through tiers 1, 2, 3."""
+    return [
+        tracker.record_retrieval(
+            file_path=f"src/mod_{i}.py",
+            task_intent="Inspect signature",
+            served_tier=i % 3 + 1,
+            baseline_content="def f(x):\n    return x\n" * (10 + i),
+            served_content="def f(x): ...\n" * (i + 1),
+            query_id=f"q_{i}",
+        )
+        for i in range(n)
+    ]
+
+
+def test_session_budget_counts_served_tokens_and_resets(temp_ledger_path: Path):
+    """Verify served tokens count against the session budget and reset_session restores it."""
+    tracker = ContextBudgetTracker(ledger_path=temp_ledger_path, session_budget=1000)
+    records = record_n(tracker, 2)
+    served = sum(r.served_tokens for r in records)
+
+    assert tracker.session_served_tokens == served
+    assert tracker.remaining_session_tokens == 1000 - served
+    assert tracker.get_summary()["session_remaining_tokens"] == 1000 - served
+
+    tracker.reset_session()
+
+    assert tracker.remaining_session_tokens == 1000
+    assert tracker.session_requests == 0
+    assert tracker.total_requests == 2
+
+
+def test_session_is_not_restored_after_restart(temp_ledger_path: Path):
+    """Verify a restarted tracker keeps the totals but starts a fresh session."""
+    record_n(ContextBudgetTracker(ledger_path=temp_ledger_path, session_budget=1000), 2)
+
+    restarted = ContextBudgetTracker(ledger_path=temp_ledger_path, session_budget=1000)
+
+    assert restarted.total_requests == 2
+    assert restarted.session_served_tokens == 0
+    assert restarted.remaining_session_tokens == 1000
+
+
+def test_session_budget_from_env(temp_ledger_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Verify ACC_MCP_SESSION_BUDGET sets the budget, the argument wins, and bad values fail loudly."""
+    monkeypatch.setenv("ACC_MCP_SESSION_BUDGET", "1234")
+    assert ContextBudgetTracker(ledger_path=temp_ledger_path).session_budget == 1234
+    assert ContextBudgetTracker(ledger_path=temp_ledger_path, session_budget=500).session_budget == 500
+
+    monkeypatch.setenv("ACC_MCP_SESSION_BUDGET", "lots")
+    with pytest.raises(ValueError, match="ACC_MCP_SESSION_BUDGET"):
+        ContextBudgetTracker(ledger_path=temp_ledger_path)
+
+    monkeypatch.delenv("ACC_MCP_SESSION_BUDGET")
+    assert ContextBudgetTracker(ledger_path=temp_ledger_path).session_budget == 6000
+
+
+def test_history_cap_keeps_correct_totals(temp_ledger_path: Path):
+    """Verify only the last N records are kept while totals cover every request, also after restart."""
+    tracker = ContextBudgetTracker(ledger_path=temp_ledger_path, history_limit=3)
+    records = record_n(tracker, 5)
+
+    expected = {
+        "total_requests": 5,
+        "cumulative_baseline_tokens": sum(r.baseline_tokens for r in records),
+        "cumulative_served_tokens": sum(r.served_tokens for r in records),
+        "tier_distribution": {1: 2, 2: 2, 3: 1},
+    }
+
+    assert [r.query_id for r in tracker.history] == ["q_2", "q_3", "q_4"]
+    for key, value in expected.items():
+        assert tracker.get_summary()[key] == value
+
+    with open(temp_ledger_path, "r", encoding="utf-8") as f:
+        assert len(json.load(f)["history"]) == 3
+
+    restarted = ContextBudgetTracker(ledger_path=temp_ledger_path, history_limit=3)
+    assert len(restarted.history) == 3
+    for key, value in expected.items():
+        assert restarted.get_summary()[key] == value
+
+
+def test_ledger_without_totals_is_recounted_from_history(temp_ledger_path: Path):
+    """Verify a ledger written before totals were stored still loads with correct totals."""
+    records = record_n(ContextBudgetTracker(ledger_path=temp_ledger_path), 4)
+    with open(temp_ledger_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    del data["totals"]
+    with open(temp_ledger_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    loaded = ContextBudgetTracker(ledger_path=temp_ledger_path, history_limit=2)
+
+    assert loaded.total_requests == 4
+    assert loaded.cumulative_served_tokens == sum(r.served_tokens for r in records)
+    assert loaded.tier_distribution == {1: 2, 2: 1, 3: 1}
+    assert [r.query_id for r in loaded.history] == ["q_2", "q_3"]

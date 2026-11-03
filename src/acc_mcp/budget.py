@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import json
 import logging
+import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -42,6 +43,7 @@ class RetrievalRecord:
     savings_percentage: float
     requested_min_tier: int | None = None
     model_tier: int | None = None
+    budget_limited: bool = False
 
     @property
     def was_escalated(self) -> bool:
@@ -68,6 +70,7 @@ class RetrievalRecord:
             savings_percentage=float(data["savings_percentage"]),
             requested_min_tier=data.get("requested_min_tier"),
             model_tier=data.get("model_tier"),
+            budget_limited=bool(data.get("budget_limited", False)),
         )
 
 
@@ -113,39 +116,86 @@ def _dict_to_symbol_info(data: dict[str, Any]) -> SymbolInfo:
 
 
 class ContextBudgetTracker:
-    """Multi-turn token consumption and savings tracker with persistent ledger."""
+    """Multi-turn token consumption and savings tracker with persistent ledger.
+
+    Totals cover every request ever recorded and survive restarts; `history` keeps only the
+    last `history_limit` records. The session counters cover the tokens served since the
+    tracker was created or `reset_session()` was called, and are not persisted, because a
+    new server process means a new agent context.
+    """
 
     DEFAULT_LEDGER_FILE: str = "context_budget.json"
+    DEFAULT_SESSION_BUDGET: int = 6000
+    SESSION_BUDGET_ENV_VAR: str = "ACC_MCP_SESSION_BUDGET"
+    DEFAULT_HISTORY_LIMIT: int = 200
 
     def __init__(
         self,
         ledger_path: str | Path | None = None,
         auto_save: bool = True,
         token_counter: TokenCounter | None = None,
+        session_budget: int | None = None,
+        history_limit: int = DEFAULT_HISTORY_LIMIT,
     ) -> None:
         self.ledger_path: Path = Path(ledger_path or self.DEFAULT_LEDGER_FILE)
         self.auto_save = auto_save
         self.token_counter = token_counter or HeuristicTokenCounter()
+        self.session_budget = self._resolve_session_budget(session_budget)
+        self.history_limit = max(1, history_limit)
 
         self.history: list[RetrievalRecord] = []
         # symbol_cache: file_path -> {"file_hash": str, "symbols": {name: SymbolInfo}}
         self._symbol_cache: dict[str, dict[str, Any]] = {}
 
+        self._total_requests = 0
+        self._total_baseline_tokens = 0
+        self._total_served_tokens = 0
+        self._tier_counts: dict[int, int] = {1: 0, 2: 0, 3: 0}
+
+        self.session_served_tokens = 0
+        self.session_requests = 0
+
         # If existing ledger file exists, load state
         if self.ledger_path.exists():
             self.load_ledger()
 
+    @classmethod
+    def _resolve_session_budget(cls, session_budget: int | None) -> int:
+        """Session budget from the argument, then the env var, then the default."""
+        raw: Any = session_budget
+        if raw is None:
+            raw = os.environ.get(cls.SESSION_BUDGET_ENV_VAR) or cls.DEFAULT_SESSION_BUDGET
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 0
+        if value <= 0:
+            raise ValueError(
+                f"Session budget must be a positive integer "
+                f"(argument or {cls.SESSION_BUDGET_ENV_VAR}), got {raw!r}"
+            )
+        return value
+
+    @property
+    def remaining_session_tokens(self) -> int:
+        return max(0, self.session_budget - self.session_served_tokens)
+
+    def reset_session(self) -> None:
+        """Start a new session with the full budget; totals and history are kept."""
+        self.session_served_tokens = 0
+        self.session_requests = 0
+
     @property
     def total_requests(self) -> int:
-        return len(self.history)
+        return self._total_requests
 
     @property
     def cumulative_baseline_tokens(self) -> int:
-        return sum(r.baseline_tokens for r in self.history)
+        return self._total_baseline_tokens
 
     @property
     def cumulative_served_tokens(self) -> int:
-        return sum(r.served_tokens for r in self.history)
+        return self._total_served_tokens
 
     @property
     def cumulative_tokens_saved(self) -> int:
@@ -162,10 +212,23 @@ class ContextBudgetTracker:
 
     @property
     def tier_distribution(self) -> dict[int, int]:
-        dist = {1: 0, 2: 0, 3: 0}
-        for r in self.history:
-            dist[r.served_tier] = dist.get(r.served_tier, 0) + 1
-        return dist
+        return dict(self._tier_counts)
+
+    def _clear_totals(self) -> None:
+        self._total_requests = 0
+        self._total_baseline_tokens = 0
+        self._total_served_tokens = 0
+        self._tier_counts = {1: 0, 2: 0, 3: 0}
+
+    def _add_to_totals(self, record: RetrievalRecord) -> None:
+        self._total_requests += 1
+        self._total_baseline_tokens += record.baseline_tokens
+        self._total_served_tokens += record.served_tokens
+        self._tier_counts[record.served_tier] = self._tier_counts.get(record.served_tier, 0) + 1
+
+    def _trim_history(self) -> None:
+        if len(self.history) > self.history_limit:
+            del self.history[: -self.history_limit]
 
     def record_retrieval(
         self,
@@ -178,8 +241,12 @@ class ContextBudgetTracker:
         query_id: str | None = None,
         requested_min_tier: int | None = None,
         model_tier: int | None = None,
+        budget_limited: bool = False,
     ) -> RetrievalRecord:
-        """Record context retrieval event, computing tokens and savings percentage."""
+        """Record context retrieval event, computing tokens and savings percentage.
+
+        The served tokens count against the session budget.
+        """
         q_id = query_id or f"q_{uuid.uuid4().hex[:8]}"
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -206,9 +273,14 @@ class ContextBudgetTracker:
             savings_percentage=savings_pct,
             requested_min_tier=requested_min_tier,
             model_tier=model_tier,
+            budget_limited=budget_limited,
         )
 
+        self._add_to_totals(record)
         self.history.append(record)
+        self._trim_history()
+        self.session_served_tokens += served_tokens
+        self.session_requests += 1
 
         if self.auto_save:
             self.save_ledger()
@@ -294,6 +366,12 @@ class ContextBudgetTracker:
             "overall_savings_percentage": self.overall_savings_percentage,
             "tier_distribution": self.tier_distribution,
             "cached_files_count": len(self._symbol_cache),
+            "history_records": len(self.history),
+            "history_limit": self.history_limit,
+            "session_budget": self.session_budget,
+            "session_served_tokens": self.session_served_tokens,
+            "session_remaining_tokens": self.remaining_session_tokens,
+            "session_requests": self.session_requests,
         }
 
     def save_ledger(self, target_path: str | Path | None = None) -> None:
@@ -304,6 +382,12 @@ class ContextBudgetTracker:
         payload = {
             "version": "1.0",
             "summary": self.get_summary(),
+            "totals": {
+                "requests": self._total_requests,
+                "baseline_tokens": self._total_baseline_tokens,
+                "served_tokens": self._total_served_tokens,
+                "tier_counts": self._tier_counts,
+            },
             "history": [r.to_dict() for r in self.history],
             "symbol_cache": self._symbol_cache,
         }
@@ -327,6 +411,21 @@ class ContextBudgetTracker:
             raw_history = data.get("history", [])
             self.history = [RetrievalRecord.from_dict(d) for d in raw_history]
             self._symbol_cache = data.get("symbol_cache", {})
+
+            self._clear_totals()
+            totals = data.get("totals")
+            if totals:
+                self._total_requests = int(totals["requests"])
+                self._total_baseline_tokens = int(totals["baseline_tokens"])
+                self._total_served_tokens = int(totals["served_tokens"])
+                self._tier_counts.update(
+                    {int(tier): int(n) for tier, n in totals.get("tier_counts", {}).items()}
+                )
+            else:
+                # Ledgers written before totals were stored kept the full history
+                for record in self.history:
+                    self._add_to_totals(record)
+            self._trim_history()
             return True
         except Exception as exc:
             logger.warning("Failed to load ledger from %s: %s", src, exc)
@@ -336,6 +435,8 @@ class ContextBudgetTracker:
         """Reset in-memory counters, history, and cache."""
         self.history.clear()
         self._symbol_cache.clear()
+        self._clear_totals()
+        self.reset_session()
         if self.ledger_path.exists():
             try:
                 self.ledger_path.unlink()
