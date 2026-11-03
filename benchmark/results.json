@@ -26,7 +26,7 @@
           "prompt_tokens": 94,
           "completion_tokens": 45,
           "total_tokens": 139,
-          "duration_ms": 0.3052920219488442,
+          "duration_ms": 0.6074170232750475,
           "error_message": null,
           "context_preview": "\"\"\"Token verification helpers.\"\"\"\n\nimport jwt\n\ndef verify_token(token: str, secret: str, algorithms: list[str] = [\"HS256\"]) -> dict:\n    \"\"\"Decode and..."
         },
@@ -39,7 +39,7 @@
           "prompt_tokens": 94,
           "completion_tokens": 45,
           "total_tokens": 139,
-          "duration_ms": 0.08404196705669165,
+          "duration_ms": 0.08154200622811913,
           "error_message": null,
           "context_preview": "\"\"\"Token verification helpers.\"\"\"\n\nimport jwt\n\ndef verify_token(token: str, secret: str, algorithms: list[str] = [\"HS256\"]) -> dict:\n    \"\"\"Decode and..."
         },
@@ -52,7 +52,7 @@
           "prompt_tokens": 94,
           "completion_tokens": 45,
           "total_tokens": 139,
-          "duration_ms": 0.08079101098701358,
+          "duration_ms": 0.08062500273808837,
           "error_message": null,
           "context_preview": "\"\"\"Token verification helpers.\"\"\"\n\nimport jwt\n\ndef verify_token(token: str, secret: str, algorithms: list[str] = [\"HS256\"]) -> dict:\n    \"\"\"Decode and..."
         }
@@ -67,7 +67,7 @@
           "prompt_tokens": 68,
           "completion_tokens": 45,
           "total_tokens": 113,
-          "duration_ms": 2.977916970849037,
+          "duration_ms": 2.7454579831101,
           "error_message": null,
           "context_preview": "import jwt\n\ndef verify_token(token: str, secret: str, algorithms: list[str]=['HS256']) -> dict:\n    \"\"\"Decode and validate JWT bearer token; returns p..."
         },
@@ -80,7 +80,7 @@
           "prompt_tokens": 68,
           "completion_tokens": 45,
           "total_tokens": 113,
-          "duration_ms": 1.7750419792719185,
+          "duration_ms": 1.6425420180894434,
           "error_message": null,
           "context_preview": "import jwt\n\ndef verify_token(token: str, secret: str, algorithms: list[str]=['HS256']) -> dict:\n    \"\"\"Decode and validate JWT bearer token; returns p..."
         },
@@ -93,7 +93,7 @@
           "prompt_tokens": 68,
           "completion_tokens": 45,
           "total_tokens": 113,
-          "duration_ms": 1.5109159867279232,
+          "duration_ms": 1.5182080096565187,
           "error_message": null,
           "context_preview": "import jwt\n\ndef verify_token(token: str, secret: str, algorithms: list[str]=['HS256']) -> dict:\n    \"\"\"Decode and validate JWT bearer token; returns p..."
         }
@@ -123,7 +123,7 @@
           "prompt_tokens": 160,
           "completion_tokens": 45,
           "total_tokens": 205,
-          "duration_ms": 0.18366699805483222,
+          "duration_ms": 0.19225000869482756,
           "error_message": null,
           "context_preview": "\"\"\"Statistical calculation utilities.\"\"\"\n\nfrom typing import Sequence\n\ndef compute_mean(data: Sequence[float]) -> float:\n    \"\"\"Compute arithmetic mea..."
         },
@@ -136,7 +136,7 @@
           "prompt_tokens": 160,
           "completion_tokens": 45,
           "total_tokens": 205,
-          "duration_ms": 0.14687498332932591,
+          "duration_ms": 0.14925003051757812,
           "error_message": null,
           "context_preview": "\"\"\"Statistical calculation utilities.\"\"\"\n\nfrom typing import Sequence\n\ndef compute_mean(data: Sequence[float]) -> float:\n    \"\"\"Compute arithmetic mea..."
         },
@@ -149,7 +149,7 @@
           "prompt_tokens": 160,
           "completion_tokens": 45,
           "total_tokens": 205,
-          "duration_ms": 0.14458398800343275,
+          "duration_ms": 0.14633400132879615,
           "error_message": null,
           "context_preview": "\"\"\"Statistical calculation utilities.\"\"\"\n\nfrom typing import Sequence\n\ndef compute_mean(data: Sequence[float]) -> float:\n    \"\"\"Compute arithmetic mea..."
         }
@@ -164,7 +164,7 @@
           "prompt_tokens": 62,
           "completion_tokens": 45,
           "total_tokens": 107,
-          "duration_ms": 2.026124973781407,
+          "duration_ms": 2.3442499805241823,
           "error_message": null,
           "context_preview": "from typing import Sequence\n\ndef compute_variance(data: Sequence[float], sample: bool=True) -> float:\n    \"\"\"Calculate variance score for a numerical ..."
         },
@@ -177,7 +177,7 @@
           "prompt_tokens": 62,
           "completion_tokens": 45,
           "total_tokens": 107,
-          "duration_ms": 1.974583021365106,
+          "duration_ms": 2.0234169787727296,
           "error_message": null,
           "context_preview": "from typing import Sequence\n\ndef compute_variance(data: Sequence[float], sample: bool=True) -> float:\n    \"\"\"Calculate variance score for a numerical ..."
         },
@@ -190,7 +190,7 @@
           "prompt_tokens": 62,
           "completion_tokens": 45,
           "total_tokens": 107,
-          "duration_ms": 1.7955839866772294,
+          "duration_ms": 1.8686660332605243,
           "error_message": null,
           "context_preview": "from typing import Sequence\n\ndef compute_variance(data: Sequence[float], sample: bool=True) -> float:\n    \"\"\"Calculate variance score for a numerical ..."
         }
@@ -220,7 +220,7 @@
           "prompt_tokens": 265,
           "completion_tokens": 45,
           "total_tokens": 310,
-          "duration_ms": 0.28849998489022255,
+          "duration_ms": 0.2865829737856984,
           "error_message": null,
           "context_preview": "\"\"\"Application configuration loader.\"\"\"\n\nimport os\nfrom typing import Any, Optional\n\nclass ConfigLoader:\n    \"\"\"Loads configuration values from enviro..."
         },
@@ -233,7 +233,7 @@
           "prompt_tokens": 265,
           "completion_tokens": 45,
           "total_tokens": 310,
-          "duration_ms": 0.2600420266389847,
+          "duration_ms": 0.2518750261515379,
           "error_message": null,
           "context_preview": "\"\"\"Application configuration loader.\"\"\"\n\nimport os\nfrom typing import Any, Optional\n\nclass ConfigLoader:\n    \"\"\"Loads configuration values from enviro..."
         },
@@ -246,7 +246,7 @@
           "prompt_tokens": 265,
           "completion_tokens": 45,
           "total_tokens": 310,
-          "duration_ms": 0.24904200108721852,
+          "duration_ms": 0.25037501472979784,
           "error_message": null,
           "context_preview": "\"\"\"Application configuration loader.\"\"\"\n\nimport os\nfrom typing import Any, Optional\n\nclass ConfigLoader:\n    \"\"\"Loads configuration values from enviro..."
         }
@@ -261,7 +261,7 @@
           "prompt_tokens": 159,
           "completion_tokens": 45,
           "total_tokens": 204,
-          "duration_ms": 2.885624999180436,
+          "duration_ms": 2.9617089894600213,
           "error_message": null,
           "context_preview": "import os\nfrom typing import Any, Optional\n\nclass ConfigLoader:\n    \"\"\"Loads configuration values from environment variables and defaults.\"\"\"\n\n    def..."
         },
@@ -274,7 +274,7 @@
           "prompt_tokens": 159,
           "completion_tokens": 45,
           "total_tokens": 204,
-          "duration_ms": 2.6942920521833003,
+          "duration_ms": 3.0053340015001595,
           "error_message": null,
           "context_preview": "import os\nfrom typing import Any, Optional\n\nclass ConfigLoader:\n    \"\"\"Loads configuration values from environment variables and defaults.\"\"\"\n\n    def..."
         },
@@ -287,7 +287,7 @@
           "prompt_tokens": 159,
           "completion_tokens": 45,
           "total_tokens": 204,
-          "duration_ms": 2.654500014614314,
+          "duration_ms": 2.878666971810162,
           "error_message": null,
           "context_preview": "import os\nfrom typing import Any, Optional\n\nclass ConfigLoader:\n    \"\"\"Loads configuration values from environment variables and defaults.\"\"\"\n\n    def..."
         }
@@ -317,7 +317,7 @@
           "prompt_tokens": 270,
           "completion_tokens": 45,
           "total_tokens": 315,
-          "duration_ms": 0.2863749978132546,
+          "duration_ms": 0.28370798099786043,
           "error_message": null,
           "context_preview": "\"\"\"Pub-sub event bus module.\"\"\"\n\nfrom typing import Callable, Any\n\nclass EventEmitter:\n    \"\"\"Synchronous event emitter broker.\"\"\"\n\n    def __init__(s..."
         },
@@ -330,7 +330,7 @@
           "prompt_tokens": 270,
           "completion_tokens": 45,
           "total_tokens": 315,
-          "duration_ms": 0.24691596627235413,
+          "duration_ms": 0.24691701401025057,
           "error_message": null,
           "context_preview": "\"\"\"Pub-sub event bus module.\"\"\"\n\nfrom typing import Callable, Any\n\nclass EventEmitter:\n    \"\"\"Synchronous event emitter broker.\"\"\"\n\n    def __init__(s..."
         },
@@ -343,7 +343,7 @@
           "prompt_tokens": 270,
           "completion_tokens": 45,
           "total_tokens": 315,
-          "duration_ms": 0.25045796064659953,
+          "duration_ms": 0.2483749995008111,
           "error_message": null,
           "context_preview": "\"\"\"Pub-sub event bus module.\"\"\"\n\nfrom typing import Callable, Any\n\nclass EventEmitter:\n    \"\"\"Synchronous event emitter broker.\"\"\"\n\n    def __init__(s..."
         }
@@ -358,7 +358,7 @@
           "prompt_tokens": 245,
           "completion_tokens": 45,
           "total_tokens": 290,
-          "duration_ms": 4.3148749973624945,
+          "duration_ms": 4.13487502373755,
           "error_message": null,
           "context_preview": "# ====================================================================\n# Tier 2 Context: Call-Graph Slice for 'EventEmitter.dispatch'\n# Cyclomatic Com..."
         },
@@ -371,7 +371,7 @@
           "prompt_tokens": 245,
           "completion_tokens": 45,
           "total_tokens": 290,
-          "duration_ms": 3.966500051319599,
+          "duration_ms": 3.9774159668013453,
           "error_message": null,
           "context_preview": "# ====================================================================\n# Tier 2 Context: Call-Graph Slice for 'EventEmitter.dispatch'\n# Cyclomatic Com..."
         },
@@ -384,7 +384,7 @@
           "prompt_tokens": 245,
           "completion_tokens": 45,
           "total_tokens": 290,
-          "duration_ms": 3.938915964681655,
+          "duration_ms": 4.0129589615389705,
           "error_message": null,
           "context_preview": "# ====================================================================\n# Tier 2 Context: Call-Graph Slice for 'EventEmitter.dispatch'\n# Cyclomatic Com..."
         }
@@ -414,7 +414,7 @@
           "prompt_tokens": 276,
           "completion_tokens": 45,
           "total_tokens": 321,
-          "duration_ms": 0.294625002425164,
+          "duration_ms": 0.2989579807035625,
           "error_message": null,
           "context_preview": "\"\"\"SQL query filter builder.\"\"\"\n\ndef escape_val(v: str) -> str:\n    \"\"\"Escape single quotes for raw SQL safety.\"\"\"\n    return v.replace(\"'\", \"''\")\n\nde..."
         },
@@ -427,7 +427,7 @@
           "prompt_tokens": 276,
           "completion_tokens": 45,
           "total_tokens": 321,
-          "duration_ms": 0.24916703114286065,
+          "duration_ms": 0.24820800172165036,
           "error_message": null,
           "context_preview": "\"\"\"SQL query filter builder.\"\"\"\n\ndef escape_val(v: str) -> str:\n    \"\"\"Escape single quotes for raw SQL safety.\"\"\"\n    return v.replace(\"'\", \"''\")\n\nde..."
         },
@@ -440,7 +440,7 @@
           "prompt_tokens": 276,
           "completion_tokens": 45,
           "total_tokens": 321,
-          "duration_ms": 0.2496249508112669,
+          "duration_ms": 0.2478330279700458,
           "error_message": null,
           "context_preview": "\"\"\"SQL query filter builder.\"\"\"\n\ndef escape_val(v: str) -> str:\n    \"\"\"Escape single quotes for raw SQL safety.\"\"\"\n    return v.replace(\"'\", \"''\")\n\nde..."
         }
@@ -455,7 +455,7 @@
           "prompt_tokens": 211,
           "completion_tokens": 45,
           "total_tokens": 256,
-          "duration_ms": 4.364249994978309,
+          "duration_ms": 4.449042025953531,
           "error_message": null,
           "context_preview": "# ====================================================================\n# Tier 2 Context: Call-Graph Slice for 'build_filter_clause'\n# Cyclomatic Compl..."
         },
@@ -468,7 +468,7 @@
           "prompt_tokens": 211,
           "completion_tokens": 45,
           "total_tokens": 256,
-          "duration_ms": 4.283917020075023,
+          "duration_ms": 3.9493750082328916,
           "error_message": null,
           "context_preview": "# ====================================================================\n# Tier 2 Context: Call-Graph Slice for 'build_filter_clause'\n# Cyclomatic Compl..."
         },
@@ -481,7 +481,7 @@
           "prompt_tokens": 211,
           "completion_tokens": 45,
           "total_tokens": 256,
-          "duration_ms": 4.0575420134700835,
+          "duration_ms": 4.6554579748772085,
           "error_message": null,
           "context_preview": "# ====================================================================\n# Tier 2 Context: Call-Graph Slice for 'build_filter_clause'\n# Cyclomatic Compl..."
         }
@@ -511,7 +511,7 @@
           "prompt_tokens": 275,
           "completion_tokens": 45,
           "total_tokens": 320,
-          "duration_ms": 0.27966697234660387,
+          "duration_ms": 0.2923339488916099,
           "error_message": null,
           "context_preview": "\"\"\"Cache management service.\"\"\"\n\nclass CacheManager:\n    \"\"\"High-performance multi-level caching service.\"\"\"\n\n    def __init__(self) -> None:\n        ..."
         },
@@ -524,7 +524,7 @@
           "prompt_tokens": 275,
           "completion_tokens": 45,
           "total_tokens": 320,
-          "duration_ms": 0.26283302577212453,
+          "duration_ms": 0.246542040258646,
           "error_message": null,
           "context_preview": "\"\"\"Cache management service.\"\"\"\n\nclass CacheManager:\n    \"\"\"High-performance multi-level caching service.\"\"\"\n\n    def __init__(self) -> None:\n        ..."
         },
@@ -537,7 +537,7 @@
           "prompt_tokens": 275,
           "completion_tokens": 45,
           "total_tokens": 320,
-          "duration_ms": 0.2527080359868705,
+          "duration_ms": 0.24566700449213386,
           "error_message": null,
           "context_preview": "\"\"\"Cache management service.\"\"\"\n\nclass CacheManager:\n    \"\"\"High-performance multi-level caching service.\"\"\"\n\n    def __init__(self) -> None:\n        ..."
         }
@@ -552,7 +552,7 @@
           "prompt_tokens": 253,
           "completion_tokens": 45,
           "total_tokens": 298,
-          "duration_ms": 4.701750003732741,
+          "duration_ms": 4.489124985411763,
           "error_message": null,
           "context_preview": "# ====================================================================\n# Tier 2 Context: Call-Graph Slice for 'CacheManager.invalidate_prefix'\n# Cyclo..."
         },
@@ -565,7 +565,7 @@
           "prompt_tokens": 253,
           "completion_tokens": 45,
           "total_tokens": 298,
-          "duration_ms": 4.777666996233165,
+          "duration_ms": 4.064125008881092,
           "error_message": null,
           "context_preview": "# ====================================================================\n# Tier 2 Context: Call-Graph Slice for 'CacheManager.invalidate_prefix'\n# Cyclo..."
         },
@@ -578,7 +578,7 @@
           "prompt_tokens": 253,
           "completion_tokens": 45,
           "total_tokens": 298,
-          "duration_ms": 4.365750006400049,
+          "duration_ms": 4.0825000032782555,
           "error_message": null,
           "context_preview": "# ====================================================================\n# Tier 2 Context: Call-Graph Slice for 'CacheManager.invalidate_prefix'\n# Cyclo..."
         }
@@ -608,7 +608,7 @@
           "prompt_tokens": 429,
           "completion_tokens": 45,
           "total_tokens": 474,
-          "duration_ms": 0.4717090050689876,
+          "duration_ms": 0.4627089947462082,
           "error_message": null,
           "context_preview": "\"\"\"E-commerce order fulfillment pipeline.\"\"\"\n\nfrom typing import Any\n\nclass OrderPipeline:\n    \"\"\"State machine managing order lifecycle from pending ..."
         },
@@ -621,7 +621,7 @@
           "prompt_tokens": 429,
           "completion_tokens": 45,
           "total_tokens": 474,
-          "duration_ms": 0.5280409823171794,
+          "duration_ms": 0.4057090263813734,
           "error_message": null,
           "context_preview": "\"\"\"E-commerce order fulfillment pipeline.\"\"\"\n\nfrom typing import Any\n\nclass OrderPipeline:\n    \"\"\"State machine managing order lifecycle from pending ..."
         },
@@ -634,7 +634,7 @@
           "prompt_tokens": 429,
           "completion_tokens": 45,
           "total_tokens": 474,
-          "duration_ms": 0.4112499882467091,
+          "duration_ms": 0.4053330048918724,
           "error_message": null,
           "context_preview": "\"\"\"E-commerce order fulfillment pipeline.\"\"\"\n\nfrom typing import Any\n\nclass OrderPipeline:\n    \"\"\"State machine managing order lifecycle from pending ..."
         }
@@ -649,7 +649,7 @@
           "prompt_tokens": 352,
           "completion_tokens": 45,
           "total_tokens": 397,
-          "duration_ms": 4.316415986977518,
+          "duration_ms": 3.9415419450961053,
           "error_message": null,
           "context_preview": "\"\"\"E-commerce order fulfillment pipeline.\"\"\"\nfrom typing import Any\n\nclass OrderPipeline:\n    \"\"\"State machine managing order lifecycle from pending t..."
         },
@@ -662,7 +662,7 @@
           "prompt_tokens": 352,
           "completion_tokens": 45,
           "total_tokens": 397,
-          "duration_ms": 4.155499977059662,
+          "duration_ms": 3.665041003841907,
           "error_message": null,
           "context_preview": "\"\"\"E-commerce order fulfillment pipeline.\"\"\"\nfrom typing import Any\n\nclass OrderPipeline:\n    \"\"\"State machine managing order lifecycle from pending t..."
         },
@@ -675,7 +675,7 @@
           "prompt_tokens": 352,
           "completion_tokens": 45,
           "total_tokens": 397,
-          "duration_ms": 3.8197910180315375,
+          "duration_ms": 3.6432500346563756,
           "error_message": null,
           "context_preview": "\"\"\"E-commerce order fulfillment pipeline.\"\"\"\nfrom typing import Any\n\nclass OrderPipeline:\n    \"\"\"State machine managing order lifecycle from pending t..."
         }
@@ -705,7 +705,7 @@
           "prompt_tokens": 323,
           "completion_tokens": 45,
           "total_tokens": 368,
-          "duration_ms": 0.3702080575749278,
+          "duration_ms": 0.408249965403229,
           "error_message": null,
           "context_preview": "\"\"\"Streaming data partitioner engine.\"\"\"\n\nimport queue\nimport threading\nfrom typing import Any\n\nclass StreamPartitioner:\n    \"\"\"Partitions data stream..."
         },
@@ -718,7 +718,7 @@
           "prompt_tokens": 323,
           "completion_tokens": 45,
           "total_tokens": 368,
-          "duration_ms": 0.321374973282218,
+          "duration_ms": 0.3226670087315142,
           "error_message": null,
           "context_preview": "\"\"\"Streaming data partitioner engine.\"\"\"\n\nimport queue\nimport threading\nfrom typing import Any\n\nclass StreamPartitioner:\n    \"\"\"Partitions data stream..."
         },
@@ -731,7 +731,7 @@
           "prompt_tokens": 323,
           "completion_tokens": 45,
           "total_tokens": 368,
-          "duration_ms": 0.3195420140400529,
+          "duration_ms": 0.3197499900124967,
           "error_message": null,
           "context_preview": "\"\"\"Streaming data partitioner engine.\"\"\"\n\nimport queue\nimport threading\nfrom typing import Any\n\nclass StreamPartitioner:\n    \"\"\"Partitions data stream..."
         }
@@ -746,7 +746,7 @@
           "prompt_tokens": 244,
           "completion_tokens": 45,
           "total_tokens": 289,
-          "duration_ms": 3.3909999765455723,
+          "duration_ms": 3.5991669865325093,
           "error_message": null,
           "context_preview": "\"\"\"Streaming data partitioner engine.\"\"\"\nimport queue\nimport threading\nfrom typing import Any\n\nclass StreamPartitioner:\n    \"\"\"Partitions data stream ..."
         },
@@ -759,7 +759,7 @@
           "prompt_tokens": 244,
           "completion_tokens": 45,
           "total_tokens": 289,
-          "duration_ms": 3.188250004313886,
+          "duration_ms": 3.188417002093047,
           "error_message": null,
           "context_preview": "\"\"\"Streaming data partitioner engine.\"\"\"\nimport queue\nimport threading\nfrom typing import Any\n\nclass StreamPartitioner:\n    \"\"\"Partitions data stream ..."
         },
@@ -772,7 +772,7 @@
           "prompt_tokens": 244,
           "completion_tokens": 45,
           "total_tokens": 289,
-          "duration_ms": 3.3340409863740206,
+          "duration_ms": 3.3109160140156746,
           "error_message": null,
           "context_preview": "\"\"\"Streaming data partitioner engine.\"\"\"\nimport queue\nimport threading\nfrom typing import Any\n\nclass StreamPartitioner:\n    \"\"\"Partitions data stream ..."
         }
@@ -802,7 +802,7 @@
           "prompt_tokens": 310,
           "completion_tokens": 45,
           "total_tokens": 355,
-          "duration_ms": 0.35366701195016503,
+          "duration_ms": 0.3457910497672856,
           "error_message": null,
           "context_preview": "\"\"\"Cryptographic Merkle tree ledger verification.\"\"\"\n\nimport hashlib\n\nclass LedgerTree:\n    \"\"\"Binary Merkle tree implementation for transaction integ..."
         },
@@ -815,7 +815,7 @@
           "prompt_tokens": 310,
           "completion_tokens": 45,
           "total_tokens": 355,
-          "duration_ms": 0.2958329860121012,
+          "duration_ms": 0.2925409935414791,
           "error_message": null,
           "context_preview": "\"\"\"Cryptographic Merkle tree ledger verification.\"\"\"\n\nimport hashlib\n\nclass LedgerTree:\n    \"\"\"Binary Merkle tree implementation for transaction integ..."
         },
@@ -828,7 +828,7 @@
           "prompt_tokens": 310,
           "completion_tokens": 45,
           "total_tokens": 355,
-          "duration_ms": 0.292791984975338,
+          "duration_ms": 0.29437500052154064,
           "error_message": null,
           "context_preview": "\"\"\"Cryptographic Merkle tree ledger verification.\"\"\"\n\nimport hashlib\n\nclass LedgerTree:\n    \"\"\"Binary Merkle tree implementation for transaction integ..."
         }
@@ -843,7 +843,7 @@
           "prompt_tokens": 266,
           "completion_tokens": 45,
           "total_tokens": 311,
-          "duration_ms": 3.1879169982858,
+          "duration_ms": 3.3556250273250043,
           "error_message": null,
           "context_preview": "\"\"\"Cryptographic Merkle tree ledger verification.\"\"\"\nimport hashlib\n\nclass LedgerTree:\n    \"\"\"Binary Merkle tree implementation for transaction integr..."
         },
@@ -856,7 +856,7 @@
           "prompt_tokens": 266,
           "completion_tokens": 45,
           "total_tokens": 311,
-          "duration_ms": 3.213917021639645,
+          "duration_ms": 3.157583996653557,
           "error_message": null,
           "context_preview": "\"\"\"Cryptographic Merkle tree ledger verification.\"\"\"\nimport hashlib\n\nclass LedgerTree:\n    \"\"\"Binary Merkle tree implementation for transaction integr..."
         },
@@ -869,7 +869,7 @@
           "prompt_tokens": 266,
           "completion_tokens": 45,
           "total_tokens": 311,
-          "duration_ms": 3.1498330063186586,
+          "duration_ms": 3.160499967634678,
           "error_message": null,
           "context_preview": "\"\"\"Cryptographic Merkle tree ledger verification.\"\"\"\nimport hashlib\n\nclass LedgerTree:\n    \"\"\"Binary Merkle tree implementation for transaction integr..."
         }
@@ -899,7 +899,7 @@
           "prompt_tokens": 20112,
           "completion_tokens": 0,
           "total_tokens": 20112,
-          "duration_ms": 11.993166001047939,
+          "duration_ms": 12.218583025969565,
           "error_message": "ContextWindowOverflowError: Prompt tokens (20112) exceeded model context window limit (8192 tokens).",
           "context_preview": "\"\"\"Massive Enterprise Monolith Router Module (Simulates 9,000+ token context).\"\"\"\n\ndef legacy_enterprise_handler_0(req: dict, ctx: dict) -> dict:\n    ..."
         },
@@ -912,7 +912,7 @@
           "prompt_tokens": 20112,
           "completion_tokens": 0,
           "total_tokens": 20112,
-          "duration_ms": 11.882582970429212,
+          "duration_ms": 11.855708027724177,
           "error_message": "ContextWindowOverflowError: Prompt tokens (20112) exceeded model context window limit (8192 tokens).",
           "context_preview": "\"\"\"Massive Enterprise Monolith Router Module (Simulates 9,000+ token context).\"\"\"\n\ndef legacy_enterprise_handler_0(req: dict, ctx: dict) -> dict:\n    ..."
         },
@@ -925,7 +925,7 @@
           "prompt_tokens": 20112,
           "completion_tokens": 0,
           "total_tokens": 20112,
-          "duration_ms": 12.212041998282075,
+          "duration_ms": 11.898833035957068,
           "error_message": "ContextWindowOverflowError: Prompt tokens (20112) exceeded model context window limit (8192 tokens).",
           "context_preview": "\"\"\"Massive Enterprise Monolith Router Module (Simulates 9,000+ token context).\"\"\"\n\ndef legacy_enterprise_handler_0(req: dict, ctx: dict) -> dict:\n    ..."
         }
@@ -940,7 +940,7 @@
           "prompt_tokens": 56,
           "completion_tokens": 45,
           "total_tokens": 101,
-          "duration_ms": 89.22537497710437,
+          "duration_ms": 106.62062501069158,
           "error_message": null,
           "context_preview": "def health_check(verbose: bool=False) -> dict[str, str]:\n    \"\"\"Return microservice health status dictionary with 200 OK semantics.\"\"\"\n    ......"
         },
@@ -953,7 +953,7 @@
           "prompt_tokens": 56,
           "completion_tokens": 45,
           "total_tokens": 101,
-          "duration_ms": 105.60708300909027,
+          "duration_ms": 85.67258401308209,
           "error_message": null,
           "context_preview": "def health_check(verbose: bool=False) -> dict[str, str]:\n    \"\"\"Return microservice health status dictionary with 200 OK semantics.\"\"\"\n    ......"
         },
@@ -966,7 +966,7 @@
           "prompt_tokens": 56,
           "completion_tokens": 45,
           "total_tokens": 101,
-          "duration_ms": 89.42595799453557,
+          "duration_ms": 86.56120800878853,
           "error_message": null,
           "context_preview": "def health_check(verbose: bool=False) -> dict[str, str]:\n    \"\"\"Return microservice health status dictionary with 200 OK semantics.\"\"\"\n    ......"
         }

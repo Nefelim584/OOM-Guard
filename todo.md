@@ -74,8 +74,8 @@
 
 ## Phase 10: AI-Use Logs, Documentation & Final Verification (R1-R4)
 *Feature: Transcripts in ai_log/, complete README.md, and comprehensive verification of all requirements.*
-- [ ] Step 10.1: Record and structure AI-use session transcripts in `ai_log/` with prompt refinements and manual code corrections.
-- [ ] Step 10.2: Write comprehensive `README.md` with architecture diagrams, installation guide, local model runner setup (`llama-server`, `Ollama`), and benchmark results.
-- [ ] Step 10.3: Run full automated pytest suite covering all modules (parser, guard, decision, budget, server, harness).
-- [ ] Step 10.4: Perform final verification of all course requirements (Block 2, Block 3, Block 4, Block 5, Block 9, R1–R4).
-- [ ] Step 10.5: Verify full test suite passes, ensure clean git state, and suggest final commit name: `chore(release): complete documentation, ai_logs, and full R1-R4 verification`.
+- [x] Step 10.1: Record and structure AI-use session transcripts in `ai_log/` with prompt refinements and manual code corrections.
+- [x] Step 10.2: Write comprehensive `README.md` with architecture diagrams, installation guide, local model runner setup (`llama-server`, `Ollama`), and benchmark results.
+- [x] Step 10.3: Run full automated pytest suite covering all modules (parser, guard, decision, budget, server, harness).
+- [x] Step 10.4: Perform final verification of all course requirements (Block 2, Block 3, Block 4, Block 5, Block 9, R1–R4).
+- [x] Step 10.5: Verify full test suite passes, ensure clean git state, and suggest final commit name: `chore(release): complete documentation, ai_logs, and full R1-R4 verification`.
