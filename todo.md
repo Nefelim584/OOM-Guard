@@ -79,3 +79,27 @@
 - [x] Step 10.3: Run full automated pytest suite covering all modules (parser, guard, decision, budget, server, harness).
 - [x] Step 10.4: Perform final verification of all course requirements (Block 2, Block 3, Block 4, Block 5, Block 9, R1–R4).
 - [x] Step 10.5: Verify full test suite passes, ensure clean git state, and suggest final commit name: `chore(release): complete documentation, ai_logs, and full R1-R4 verification`.
+
+## Phase 11: Intent Classifier Fix - Depth Comes From the Verb
+*Feature: Stop the classifier from sending almost every real query to Tier 3, by deciding depth from the action the developer asks for instead of the topic they ask about.*
+- [x] Step 11.1: Remove subject-matter words (`bug`, `crash`, `error`, `exception`, `failed`, `performance`, `race condition`, `memory leak`, `algorithm`, `logic`) from the depth-2 list, because a question about errors can be shallow or deep; keep the action verbs (`fix`, `debug`, `rewrite`, `optimize`, `implement`, `overhaul`), because those really do need the function body.
+- [x] Step 11.2: Add word-stem matching to every pattern (`\bfix\w*`, `\brewrit\w*`, `\btrac\w*`), so that common forms like "fixing" and "rewriting" are no longer missed and silently fall back to the default depth.
+- [x] Step 11.3: Replace the current "first list that matches wins" rule with counting how many patterns of each depth matched and picking the depth with the most hits; on a tie, pick the deeper one, since giving too little context is worse than giving too much.
+- [x] Step 11.4: Re-check that all 20 task intents in `data/decision_dataset.json` still land on their ground-truth tier, and run `tests/test_decision.py` and `tests/test_decision_eval.py` (all 21 parametrized intent cases are expected to still pass).
+- [x] Step 11.5: Run the full test suite, confirm no regressions, and suggest commit name: `fix(decision): classify intent depth by operation verb, not subject matter`.
+
+## Phase 12: Tier Escalation and Clearer Tool Instructions
+*Feature: Let the agent ask for a deeper tier when the slice it got was not enough, and tell the agent what to write in `task_intent` so the classifier sees useful input.*
+- [ ] Step 12.1: Add an optional `min_tier` argument to `get_adaptive_context` and serve `max(decision.tier, min_tier)`, so the decision model still picks the default tier but the agent can raise it. No server-side session state is needed.
+- [ ] Step 12.2: Rewrite the tool docstring to tell the agent what `task_intent` should contain (a few words about what it needs right now, e.g. "check signature", "trace callers", "rewrite body") and how to retry with a higher `min_tier` if the previous slice was insufficient.
+- [ ] Step 12.3: Record both the requested `min_tier` and the tier actually served in the budget ledger, so how often the agent escalates becomes a measurable, real-world miss-rate signal.
+- [ ] Step 12.4: Write tests in `tests/test_server.py` verifying that `min_tier=3` raises an inspection query to Tier 3, that a `min_tier` below the model's own choice never lowers the tier, and that the ledger stores both values.
+- [ ] Step 12.5: Run the full test suite, verify escalation behavior passes, and suggest commit name: `feat(server): add min_tier escalation parameter and intent guidance`.
+
+## Phase 13: Honest Calibration of the Decision Model
+*Feature: Turn Block 4 from hand-picked weights measured on their own dataset into a model that is fitted on training data and reported on data it has never seen.*
+- [ ] Step 13.1: Expand `data/decision_dataset.json` to roughly 100 short task intents labeled with a ground-truth tier, since the classifier reads text and 20 examples over 4 features cannot support a 100% accuracy claim.
+- [ ] Step 13.2: Add a 70/30 train/holdout split, stratified by ground-truth tier, so every tier is represented on both sides.
+- [ ] Step 13.3: Fit the four weights ($w_0 \dots w_4$) with plain gradient descent on the train split instead of setting them by hand (about 20 lines, no new dependencies), and check whether $x_2$, $x_3$, and $x_4$ now influence the outcome at all.
+- [ ] Step 13.4: Report accuracy, confusion matrix, miss rate, and false alarm rate separately for train and holdout; update the assertions in `tests/test_decision.py` (lines 161-175 pin tiers to the old weights) and `tests/test_decision_eval.py` (lines 126-149 and the literal `TN = 10` / `TP = 10` checks assume the 20-task dataset).
+- [ ] Step 13.5: Run the full test suite, put the holdout numbers in `README.md` whatever they turn out to be, and suggest commit name: `feat(decision): fit logistic weights on held-out split with expanded intent dataset`.

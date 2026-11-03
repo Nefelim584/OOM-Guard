@@ -52,67 +52,60 @@ class DecisionResult:
 class TaskIntentClassifier:
     """Classifies developer task intent into task depth x_1 in {0, 1, 2}."""
 
-    # Level 2: Full algorithmic rewrite, debugging deep logic, optimization, fixing bugs
+    # Level 2: Full algorithmic rewrite, debugging deep logic, optimization, fixing implementations
+    # Focuses on operation verbs requiring the function body, avoiding subject nouns like 'error' or 'bug'
     DEPTH_2_PATTERNS = [
-        r"\brewrite\b",
-        r"\breimplement\b",
-        r"\bfix\b",
-        r"\bbug\b",
-        r"\bdebug\b",
-        r"\boptimize\b",
-        r"\balgorithm\b",
-        r"\blogic\b",
-        r"\bimplement\b",
-        r"\boverhaul\b",
-        r"\bcrash\b",
-        r"\bperformance\b",
-        r"\brace\s+condition\b",
-        r"\bmemory\s+leak\b",
-        r"\bexception\b",
-        r"\bfailed\b",
-        r"\berror\b",
+        r"\bfix\w*",
+        r"\bdebug\w*",
+        r"\brewrit\w*",
+        r"\breimplement\w*",
+        r"\boptimi\w*",
+        r"\bimplement\w*",
+        r"\boverhaul\w*",
     ]
 
     # Level 1: Refactoring, patching, call-graph analysis, caller/callee tracing, modifying signatures
     DEPTH_1_PATTERNS = [
-        r"\brefactor\b",
-        r"\brename\b",
-        r"\bpatch\b",
-        r"\bdeprecate\b",
-        r"\btrace\b",
-        r"\bcaller\b",
-        r"\bcallee\b",
-        r"\bcall\s+graph\b",
-        r"\bdependenc\w*\b",
-        r"\bwrapper\b",
-        r"\bwire\b",
-        r"\bmigrat\w*\b",
-        r"\bmodify\b",
-        r"\bchange\b",
-        r"\bextend\b",
+        r"\brefactor\w*",
+        r"\brenam\w*",
+        r"\bpatch\w*",
+        r"\bdeprecat\w*",
+        r"\btrac\w*",
+        r"\bcaller\w*",
+        r"\bcallee\w*",
+        r"\bcall\s*site\w*",
+        r"\bcall\s+graph\w*",
+        r"\bdepend\w*",
+        r"\bwrapper\w*",
+        r"\bwire\w*",
+        r"\bmigrat\w*",
+        r"\bmodif\w*",
+        r"\bchang\w*",
+        r"\bextend\w*",
+        r"\badd\w*",
     ]
 
     # Level 0: Pure inspection, verification, checking signatures, docstrings, type hints
     DEPTH_0_PATTERNS = [
-        r"\binspect\b",
-        r"\bcheck\b",
-        r"\bview\b",
-        r"\bshow\b",
+        r"\binspect\w*",
+        r"\bcheck\w*",
+        r"\bview\w*",
+        r"\bshow\w*",
         r"\blook\s+at\b",
-        r"\bfind\b",
+        r"\bfind\w*",
         r"\bwhat\s+is\b",
         r"\bhow\s+to\s+call\b",
         r"\bhow\s+to\s+use\b",
-        r"\bcall\b",
-        r"\binvoke\b",
-        r"\busage\b",
-        r"\bsignature\b",
-        r"\btype\b",
-        r"\bdocstring\b",
-        r"\bargument\b",
-        r"\bparameter\b",
-        r"\binterface\b",
-        r"\blist\b",
+        r"\bcall(?:s|ing)?(?!\s*(?:site|graph))\b",
+        r"\binvok\w*",
+        r"\busage\w*",
+        r"\bsignature\w*",
+        r"\btype\w*",
+        r"\bdocstring\w*",
+        r"\bargument\w*",
+        r"\bparameter\w*",
+        r"\binterface\w*",
+        r"\blist\w*",
     ]
 
     def __init__(self) -> None:
@@ -123,29 +116,28 @@ class TaskIntentClassifier:
     def classify(self, task_intent: str) -> int:
         """Extract task intent depth x_1 in {0, 1, 2}.
 
-        Precedence:
-        1. Explicit rewrite/bug fix/logic overhaul -> 2
-        2. Interface refactoring/caller tracing/patching -> 1
-        3. Inspection/signature check/calling -> 0
-        Default fallback: 1 (safe intermediate tier)
+        Counts pattern matches for each depth level and selects the depth with the most hits.
+        On a tie, selects the deeper level (giving too little context is worse than giving too much).
+        Default fallback when no patterns match: 1 (safe intermediate tier).
         """
         text = task_intent.strip()
         if not text:
             return 0
 
-        # Check Depth 2 first (highest need for implementation code)
-        if any(regex.search(text) for regex in self._compiled_depth2):
-            return 2
+        hits_2 = sum(1 for regex in self._compiled_depth2 if regex.search(text))
+        hits_1 = sum(1 for regex in self._compiled_depth1 if regex.search(text))
+        hits_0 = sum(1 for regex in self._compiled_depth0 if regex.search(text))
 
-        # Check Depth 1 (need for dependencies and call graph)
-        if any(regex.search(text) for regex in self._compiled_depth1):
+        max_hits = max(hits_2, hits_1, hits_0)
+        if max_hits == 0:
             return 1
 
-        # Check Depth 0 (pure interface observation)
-        if any(regex.search(text) for regex in self._compiled_depth0):
-            return 0
-
-        return 1
+        # Tie-breaker: pick deeper depth
+        if hits_2 == max_hits:
+            return 2
+        if hits_1 == max_hits:
+            return 1
+        return 0
 
 
 class DecisionModel:

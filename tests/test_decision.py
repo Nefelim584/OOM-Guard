@@ -78,6 +78,58 @@ def test_intent_depth_2_rewrite_debug(classifier: TaskIntentClassifier, query: s
     assert classifier.classify(query) == 2
 
 
+@pytest.mark.parametrize(
+    "query,expected_depth",
+    [
+        ("Fixing the edge case in calculate_discount", 2),
+        ("Rewriting the queue scheduler from scratch", 2),
+        ("Debugging worker thread deadlock", 2),
+        ("Optimizing the lookup tree implementation", 2),
+        ("Implementing cache eviction algorithm", 2),
+        ("Tracing all callers of handle_request", 1),
+        ("Inspecting function parameters and return type", 0),
+        ("Checking docstrings and signatures", 0),
+    ],
+)
+def test_intent_word_stem_matching(classifier: TaskIntentClassifier, query: str, expected_depth: int):
+    """Verify word stems (e.g., fixing, rewriting, tracing) correctly resolve to their intent depths."""
+    assert classifier.classify(query) == expected_depth
+
+
+def test_intent_hit_counting_and_tie_breaker(classifier: TaskIntentClassifier):
+    """Verify pattern hit counting and tie-breaker preferring deeper context."""
+    # Tie between depth 0 (check) and depth 1 (caller) -> deeper wins (depth 1)
+    tie_0_1 = "Check caller dependencies of process_order"
+    assert classifier.classify(tie_0_1) == 1
+
+    # Tie between depth 0 (inspect) and depth 2 (fix) -> deeper wins (depth 2)
+    tie_0_2 = "Inspect and fix validate_user"
+    assert classifier.classify(tie_0_2) == 2
+
+    # Plurality wins: 2 hits in depth 0 (inspect, parameter) vs 1 hit in depth 1 (caller)
+    plurality_0 = "Inspect parameter types of caller function"
+    assert classifier.classify(plurality_0) == 0
+
+    # Fallback to default intermediate depth 1 when no pattern matches
+    assert classifier.classify("something completely unrelated xyz123") == 1
+    assert classifier.classify("") == 0
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Check what exceptions parse_header raises",
+        "Inspect error codes and return status",
+        "View exception types in module",
+        "Check docstring for error handling details",
+    ],
+)
+def test_intent_subject_nouns_do_not_force_depth_2(classifier: TaskIntentClassifier, query: str):
+    """Verify that queries with subject nouns like 'error' or 'exception' are not forced to depth 2."""
+    assert classifier.classify(query) in {0, 1}
+    assert classifier.classify(query) != 2
+
+
 # ---------------------------------------------------------------------------
 # 2. Feature Extraction & Compilation Tests (Step 4.2)
 # ---------------------------------------------------------------------------
