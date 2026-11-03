@@ -130,10 +130,10 @@
 
 ## Phase 17: Repository Symbol Index with a Working Cache (Block 5)
 *Feature: Index the whole workspace once and reuse it after restarts. Today `get_cached_symbols` is never called and the server re-parses the file on every request, so the "restart without re-parsing" claim is not true in practice.*
-- [ ] Step 17.1: Add a workspace indexer that walks all `.py` files under the root (skipping `.venv`, `.git`, `__pycache__`, `node_modules`) and stores a symbol map per file.
-- [ ] Step 17.2: Before parsing a file, compare its SHA-256 with the cached `file_hash`; reuse the cached symbols when it matches and re-parse only changed files.
-- [ ] Step 17.3: Expose a new MCP tool `find_symbol(name)` that returns file path, kind, and line range, so the agent can find code without knowing the file first.
-- [ ] Step 17.4: Write tests checking that a restarted server does not re-parse unchanged files (count parser calls), that an edited file is re-indexed, and that `find_symbol` returns the right location.
+- [x] Step 17.1: Add a workspace indexer that walks all `.py` files under the root (skipping `.venv`, `.git`, `__pycache__`, `node_modules`) and stores a symbol map per file.
+- [x] Step 17.2: Before parsing a file, compare its SHA-256 with the cached `file_hash`; reuse the cached symbols when it matches and re-parse only changed files.
+- [x] Step 17.3: Expose a new MCP tool `find_symbol(name)` that returns file path, kind, and line range, so the agent can find code without knowing the file first.
+- [x] Step 17.4: Write tests checking that a restarted server does not re-parse unchanged files (count parser calls), that an edited file is re-indexed, and that `find_symbol` returns the right location.
 - [ ] Step 17.5: Run the full test suite and suggest commit name: `feat(index): add repository symbol index with hash-checked cache and find_symbol tool`.
 
 ## Phase 18: Cross-File and More Accurate Call Graph

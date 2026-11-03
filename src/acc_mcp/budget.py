@@ -17,6 +17,11 @@ from acc_mcp.tokens import HeuristicTokenCounter, TokenCounter
 logger = logging.getLogger(__name__)
 
 
+def content_hash(file_content: str) -> str:
+    """SHA-256 of file text, used to tell whether a cached symbol map is still valid."""
+    return hashlib.sha256(file_content.encode("utf-8")).hexdigest()
+
+
 @dataclass
 class RetrievalRecord:
     """Record of a single context retrieval event."""
@@ -205,28 +210,44 @@ class ContextBudgetTracker:
         file_path: str,
         symbols: dict[str, SymbolInfo],
         file_content: str | None = None,
+        save: bool = True,
     ) -> None:
-        """Cache cataloged symbols and AST statistics for file_path."""
-        content_hash = ""
-        if file_content is not None:
-            content_hash = hashlib.sha256(file_content.encode("utf-8")).hexdigest()
+        """Cache cataloged symbols and AST statistics for file_path.
 
+        Pass save=False when caching many files in a row and call save_ledger() once at the end.
+        """
         serialized_symbols = {
             name: _symbol_info_to_dict(info) for name, info in symbols.items()
         }
 
         self._symbol_cache[file_path] = {
-            "file_hash": content_hash,
+            "file_hash": content_hash(file_content) if file_content is not None else "",
             "cached_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "symbols": serialized_symbols,
         }
 
-        if self.auto_save:
+        if save and self.auto_save:
+            self.save_ledger()
+
+    def forget_symbols(self, file_path: str, save: bool = True) -> None:
+        """Drop the cached symbol map for file_path (e.g. after the file was deleted)."""
+        if self._symbol_cache.pop(file_path, None) is not None and save and self.auto_save:
             self.save_ledger()
 
     def is_file_cached(self, file_path: str) -> bool:
         """Check if symbol map exists in cache for file_path."""
         return file_path in self._symbol_cache
+
+    def cached_files(self) -> list[str]:
+        """File paths that currently have a cached symbol map."""
+        return list(self._symbol_cache)
+
+    def get_cached_hash(self, file_path: str) -> str | None:
+        """SHA-256 the cached symbol map of file_path was built from, if any."""
+        entry = self._symbol_cache.get(file_path)
+        if not entry:
+            return None
+        return entry.get("file_hash") or None
 
     def get_cached_symbols(self, file_path: str) -> dict[str, SymbolInfo] | None:
         """Retrieve deserialized SymbolInfo map for file_path if available."""

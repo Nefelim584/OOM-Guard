@@ -20,10 +20,13 @@ except ImportError:
 from acc_mcp.budget import ContextBudgetTracker
 from acc_mcp.decision import DecisionModel
 from acc_mcp.guard import GuardRail, SecurityViolationError
+from acc_mcp.index import WorkspaceIndex
 from acc_mcp.parser import ASTParser
 from acc_mcp.tokens import TokenCounter
 
 logger = logging.getLogger(__name__)
+
+FIND_SYMBOL_LIMIT = 50
 
 
 def create_server(
@@ -57,11 +60,13 @@ def create_server(
         auto_save=True,
         token_counter=token_counter,
     )
+    workspace_index = WorkspaceIndex(guard=guard, tracker=budget_tracker)
 
     # Attach components to server for programmatic inspection
     server.guard = guard  # type: ignore[attr-defined]
     server.decision_model = decision_model  # type: ignore[attr-defined]
     server.budget_tracker = budget_tracker  # type: ignore[attr-defined]
+    server.workspace_index = workspace_index  # type: ignore[attr-defined]
 
     @server.tool()
     async def get_adaptive_context(
@@ -149,6 +154,29 @@ def create_server(
         )
 
         return final_context
+
+    @server.tool()
+    async def find_symbol(name: str) -> str:
+        """Find where a class, function, or method is defined anywhere in the workspace.
+
+        Use this when you know a symbol's name but not its file. Each match gives a
+        `file_path` relative to the workspace root (pass it straight to
+        get_adaptive_context), the qualified `symbol` name, its `kind`, and
+        `lineno`-`end_lineno` (the `def`/`class` line through the end of its body;
+        decorators sit just above `lineno`).
+
+        Args:
+            name: Bare name ("authenticate") or qualified name ("UserManager.authenticate").
+        """
+        workspace_index.refresh()
+        matches = workspace_index.find(name)
+        payload = {
+            "query": name,
+            "matches": [m.to_dict() for m in matches[:FIND_SYMBOL_LIMIT]],
+            "total_matches": len(matches),
+            "truncated": len(matches) > FIND_SYMBOL_LIMIT,
+        }
+        return json.dumps(payload, indent=2)
 
     @server.tool()
     async def get_token_ledger() -> str:

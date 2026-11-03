@@ -101,7 +101,8 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 - **Implementation:** Built using the standard Python `mcp` SDK with forward-compatibility across MCP 1.x and 2.x (`MCPServer` / `FastMCP`) via stdio transport.
 - **Exposed Tools:**
   1. `get_adaptive_context(file_path: str, task_intent: str, symbol_name: str | None = None)`: Executes the intent classifier and decision model, retrieves the optimal AST slice, enforces security guardrails, and records audit tokens.
-  2. `get_token_ledger()`: Returns the cumulative session token audit log and savings ledger in JSON format.
+  2. `find_symbol(name: str)`: Finds where a class, function, or method is defined anywhere in the workspace, returning file path (relative to the workspace root), qualified name, kind, and line range as JSON.
+  3. `get_token_ledger()`: Returns the cumulative session token audit log and savings ledger in JSON format.
 - **Evidence:** Tested with 8 integration tests in [`tests/test_server.py`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/tests/test_server.py) verifying protocol discovery, tool invocation, error handling, and state persistence across server restarts.
 
 ### Block 3: A Rule Enforced in Code (`src/acc_mcp/guard.py`)
@@ -141,8 +142,9 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
   - Tracks per-query token consumption and relative token savings:
     $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{\text{Served Tier}}}{\text{Tokens}_{\text{Full File}}} \times 100\%$$
   - Persists multi-turn ledger and session summaries to `context_budget.json`.
-  - **Cold Restart Test:** Demonstrates that upon process restart, the server retains the repository's symbol map (names, complexities, callers, callees, raised exceptions) and token statistics without re-parsing files.
-- **Evidence:** Tested with unit and restart recovery tests in [`tests/test_budget.py`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/tests/test_budget.py).
+  - **Workspace Symbol Index (`src/acc_mcp/index.py`):** Walks every servable `.py` file under the workspace root (skipping `.venv`, `venv`, `.git`, `__pycache__`, `node_modules`) and stores each file's symbol map (names, line ranges, complexities, callers, callees, raised exceptions) in the ledger. Each file's SHA-256 is compared with the cached `file_hash`: unchanged files are reused, changed files are re-parsed, deleted files are dropped.
+  - **Cold Restart Test:** After a restart, the index is rebuilt from the ledger and unchanged files are not parsed again (the tests count parser calls). The file served by `get_adaptive_context` is still parsed on each request, because slices are cut from its AST.
+- **Evidence:** Tested in [`tests/test_budget.py`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/tests/test_budget.py) and [`tests/test_index.py`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/tests/test_index.py).
 
 ### Block 9: A Measured Comparison (Manual Evaluation with Pi)
 - **Status:** Evaluation is done manually with the Pi coding agent (plain Pi vs Pi + ACC-MCP) on real Python tasks that come with tests. The protocol and results will live in `eval/` (see Phase 14 in `todo.md`).
@@ -245,6 +247,7 @@ OOM-Guard/
 │       ├── decision.py           # Block 4: Intent classifier & logistic scoring
 │       ├── evaluate_decision.py  # Block 4: Ground-truth benchmark evaluation
 │       ├── budget.py             # Block 5: Token ledger & restart recovery cache
+│       ├── index.py              # Block 5: Workspace symbol index (hash-checked cache)
 │       └── server.py             # Block 2: Stdio MCP Server (get_adaptive_context)
 ├── data/
 │   └── decision_dataset.json     # 20 ground-truth coding benchmark tasks
@@ -255,6 +258,7 @@ OOM-Guard/
 │   ├── test_decision.py          # Block 4 scoring model & tier policy tests
 │   ├── test_decision_eval.py     # Block 4 benchmark accuracy & zero miss tests
 │   ├── test_budget.py            # Block 5 multi-turn ledger & restart tests
+│   ├── test_index.py             # Block 5 symbol index, cache reuse & find_symbol tests
 │   └── test_server.py            # Block 2 MCP protocol & tool integration tests
 ├── ai_log/
 │   └── AI_USE_LOG.md             # R3: Complete transcript of AI prompts & fixes

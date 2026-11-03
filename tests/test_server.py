@@ -68,7 +68,8 @@ async def test_mcp_tool_discovery(temp_ledger: Path):
 
     assert "get_adaptive_context" in tool_names
     assert "get_token_ledger" in tool_names
-    assert len(tools) >= 2
+    assert "find_symbol" in tool_names
+    assert len(tools) >= 3
 
     # Check tool schemas
     context_tool = next(t for t in tools if t.name == "get_adaptive_context")
