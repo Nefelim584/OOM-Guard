@@ -25,6 +25,60 @@ def _signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     return sig
 
 
+def _dotted_name(node: ast.expr) -> str | None:
+    """`a.b.c` for a chain of Name/Attribute nodes, else None."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _annotation_type(node: ast.expr | None) -> str | None:
+    """Class named by a simple annotation: `Cls`, `mod.Cls`, `"Cls"`, `Cls | None`, `Optional[Cls]`."""
+    if node is None:
+        return None
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        sides = [
+            s for s in (node.left, node.right)
+            if not (isinstance(s, ast.Constant) and s.value is None)
+        ]
+        return _annotation_type(sides[0]) if len(sides) == 1 else None
+    if isinstance(node, ast.Subscript) and _dotted_name(node.value) in ("Optional", "typing.Optional"):
+        return _annotation_type(node.slice)
+    return _dotted_name(node)
+
+
+@dataclass(frozen=True)
+class CallSite:
+    """One call inside a function body.
+
+    receiver is "" for `f()`, the dotted receiver for `a.b.f()` (e.g. "self", "mod.sub"),
+    "super()" for `super().f()`, and None when the receiver is not a plain name chain.
+    """
+
+    receiver: str | None
+    name: str
+    lineno: int
+
+
+@dataclass(frozen=True)
+class CallerRef:
+    """A caller located in another file of the workspace."""
+
+    file_path: str
+    symbol: str
+    line: int
+
+
 @dataclass
 class SourceSegment:
     """A verbatim line range of the source file served in a Tier 3 slice."""
@@ -47,14 +101,24 @@ class SymbolInfo:
     has_type_hints: bool = False
     parent_class: str | None = None
     cyclomatic_complexity: int = 1
+    # Callers/callees in this file whose call was resolved to exactly this symbol
     callers: set[str] = field(default_factory=set)
     callees: set[str] = field(default_factory=set)
     raised_exceptions: set[str] = field(default_factory=set)
+    # In-file `obj.name()` calls with an unknown receiver type that may reach this method
+    possible_callers: set[str] = field(default_factory=set)
+    # Outgoing calls into imported modules: dotted target -> first call line
+    external_calls: dict[str, int] = field(default_factory=dict)
+    # Outgoing `obj.name()` calls with an unknown receiver type: name -> first call line
+    possible_calls: dict[str, int] = field(default_factory=dict)
+    # Filled from the workspace index, never cached: they depend on other files
+    cross_file_callers: list[CallerRef] = field(default_factory=list)
+    possible_cross_file_callers: list[CallerRef] = field(default_factory=list)
 
     @property
     def in_degree(self) -> int:
-        """In-degree: number of callers dependent on this symbol."""
-        return len(self.callers)
+        """In-degree: number of resolved callers in this file and in other files."""
+        return len(self.callers) + len(self.cross_file_callers)
 
 
 class CyclomaticComplexityVisitor(ast.NodeVisitor):
@@ -104,17 +168,45 @@ class CyclomaticComplexityVisitor(ast.NodeVisitor):
 
 
 class SymbolDependencyVisitor(ast.NodeVisitor):
-    """Collects direct callees and raised exceptions within a function or method body."""
+    """Collects call sites, local variable types, and raised exceptions within a function body."""
 
-    def __init__(self) -> None:
-        self.callees: set[str] = set()
+    def __init__(self, args: ast.arguments | None = None) -> None:
+        self.calls: list[CallSite] = []
         self.raised_exceptions: set[str] = set()
+        # Variable name -> dotted class expression, from parameter annotations and `x = Cls(...)`
+        self.local_types: dict[str, str] = {}
+        if args is not None:
+            for arg in args.posonlyargs + args.args + args.kwonlyargs:
+                type_name = _annotation_type(arg.annotation)
+                if type_name:
+                    self.local_types[arg.arg] = type_name
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if isinstance(node.value, ast.Call):
+            type_name = _dotted_name(node.value.func)
+            if type_name:
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        self.local_types[target.id] = type_name
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        type_name = _annotation_type(node.annotation)
+        if type_name and isinstance(node.target, ast.Name):
+            self.local_types[node.target.id] = type_name
+        self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
-        if isinstance(node.func, ast.Name):
-            self.callees.add(node.func.id)
-        elif isinstance(node.func, ast.Attribute):
-            self.callees.add(node.func.attr)
+        func = node.func
+        if isinstance(func, ast.Name):
+            self.calls.append(CallSite(receiver="", name=func.id, lineno=node.lineno))
+        elif isinstance(func, ast.Attribute):
+            value = func.value
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "super":
+                receiver: str | None = "super()"
+            else:
+                receiver = _dotted_name(value)
+            self.calls.append(CallSite(receiver=receiver, name=func.attr, lineno=node.lineno))
         self.generic_visit(node)
 
     def visit_Raise(self, node: ast.Raise) -> None:
@@ -226,11 +318,20 @@ class Tier1Transformer(ast.NodeTransformer):
 class ASTParser:
     """Parses Python source code and generates structural context slices."""
 
-    def __init__(self, source_code: str, file_path: str = "") -> None:
+    def __init__(self, source_code: str, file_path: str = "", package: str | None = None) -> None:
+        """package is the dotted package this file belongs to (e.g. "pkg" for pkg/service.py);
+        relative imports are only resolved when it is given."""
         self.source_code = source_code
         self.file_path = file_path
+        self.package = package
         self._tree: ast.Module | None = None
         self._symbols: dict[str, SymbolInfo] = {}
+        # Call-graph inputs: local name -> dotted import target, top-level classes and their bases,
+        # and the call sites found in each function/method (with its enclosing class)
+        self._imports: dict[str, str] = {}
+        self._top_level: set[str] = set()
+        self._class_bases: dict[str, list[str]] = {}
+        self._call_sites: dict[str, tuple[str | None, SymbolDependencyVisitor]] = {}
         # Keyed by qualified symbol name: source line span (decorators included) and AST node
         self._spans: dict[str, tuple[int, int]] = {}
         self._nodes: dict[str, ast.stmt] = {}
@@ -264,17 +365,140 @@ class ASTParser:
 
     def _compute_metrics_and_deps(
         self, node: ast.FunctionDef | ast.AsyncFunctionDef
-    ) -> tuple[int, set[str], set[str]]:
-        """Compute cyclomatic complexity, callees, and raised exceptions for a function node."""
+    ) -> tuple[int, SymbolDependencyVisitor]:
+        """Compute cyclomatic complexity, and collect call sites and raised exceptions, for a function node."""
         cc_visitor = CyclomaticComplexityVisitor()
         for b_stmt in node.body:
             cc_visitor.visit(b_stmt)
 
-        dep_visitor = SymbolDependencyVisitor()
+        dep_visitor = SymbolDependencyVisitor(node.args)
         for b_stmt in node.body:
             dep_visitor.visit(b_stmt)
 
-        return cc_visitor.complexity, dep_visitor.callees, dep_visitor.raised_exceptions
+        return cc_visitor.complexity, dep_visitor
+
+    def _import_base(self, node: ast.ImportFrom) -> str | None:
+        """Absolute module of `from <module> import ...`, or None if a relative import cannot be resolved."""
+        if not node.level:
+            return node.module
+        if self.package is None:
+            return None
+        parts = self.package.split(".") if self.package else []
+        up = node.level - 1
+        if up > len(parts):
+            return None
+        base = parts[: len(parts) - up] + (node.module.split(".") if node.module else [])
+        return ".".join(base)
+
+    def _collect_imports(self) -> None:
+        """Map each imported local name to the dotted name it refers to (imports in any scope)."""
+        assert self._tree is not None
+        for node in ast.walk(self._tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.asname:
+                        self._imports[alias.asname] = alias.name
+                    else:
+                        head = alias.name.split(".")[0]
+                        self._imports[head] = head
+            elif isinstance(node, ast.ImportFrom):
+                base = self._import_base(node)
+                if base is None:
+                    continue
+                for alias in node.names:
+                    if alias.name != "*":
+                        target = f"{base}.{alias.name}" if base else alias.name
+                        self._imports[alias.asname or alias.name] = target
+
+    def _resolve_import(self, dotted: str) -> str | None:
+        """Dotted target of a name chain whose head was imported, e.g. `m.Cls` -> `pkg.mod.Cls`."""
+        head, _, rest = dotted.partition(".")
+        target = self._imports.get(head)
+        if target is None:
+            return None
+        return f"{target}.{rest}" if rest else target
+
+    def _find_method(self, cls: str, name: str, seen: set[str] | None = None) -> str | None:
+        """Qualified name of `name` on class `cls` or on one of its base classes in this file."""
+        qualified = f"{cls}.{name}"
+        if qualified in self._symbols and self._symbols[qualified].name == qualified:
+            return qualified
+        seen = (seen or set()) | {cls}
+        for base in self._class_bases.get(cls, []):
+            if base in self._class_bases and base not in seen:
+                found = self._find_method(base, name, seen)
+                if found:
+                    return found
+        return None
+
+    def _resolve_on_type(self, type_name: str, name: str) -> tuple[str, str]:
+        """Resolve `obj.name()` where obj is known to be an instance of type_name."""
+        if type_name in self._class_bases:
+            target = self._find_method(type_name, name)
+            return ("local", target) if target else ("possible", name)
+        imported = self._resolve_import(type_name)
+        if imported:
+            return ("external", f"{imported}.{name}")
+        return ("possible", name)
+
+    def _resolve_call(
+        self, site: CallSite, owner: str | None, local_types: dict[str, str]
+    ) -> tuple[str, str] | None:
+        """Classify a call as ("local", qualified name), ("external", dotted target),
+        ("possible", method name) when the receiver type is unknown, or None (builtins etc.)."""
+        receiver, name = site.receiver, site.name
+        if receiver == "":
+            if name in self._top_level:
+                return ("local", name)
+            if name in self._imports:
+                return ("external", self._imports[name])
+            return None
+        if receiver in ("self", "cls") and owner:
+            target = self._find_method(owner, name)
+            return ("local", target) if target else ("possible", name)
+        if receiver == "super()" and owner:
+            for base in self._class_bases.get(owner, []):
+                if base in self._class_bases:
+                    target = self._find_method(base, name)
+                    if target:
+                        return ("local", target)
+            return ("possible", name)
+        if receiver is None:
+            return ("possible", name)
+        if receiver in local_types:
+            return self._resolve_on_type(local_types[receiver], name)
+        if receiver in self._class_bases:
+            return self._resolve_on_type(receiver, name)
+        imported = self._resolve_import(receiver)
+        if imported:
+            return ("external", f"{imported}.{name}")
+        return ("possible", name)
+
+    def _link_calls(self) -> None:
+        """Turn the collected call sites into callers/callees, external and possible calls."""
+        methods_by_name: dict[str, list[str]] = {}
+        for qualified, info in self._symbols.items():
+            if info.kind == "method" and info.name == qualified:
+                methods_by_name.setdefault(qualified.split(".")[-1], []).append(qualified)
+
+        for caller_name, (owner, visitor) in self._call_sites.items():
+            caller = self._symbols[caller_name]
+            for site in visitor.calls:
+                resolved = self._resolve_call(site, owner, visitor.local_types)
+                if resolved is None:
+                    continue
+                kind, target = resolved
+                if kind == "local":
+                    caller.callees.add(target)
+                    if target != caller_name:
+                        self._symbols[target].callers.add(caller_name)
+                elif kind == "external":
+                    caller.external_calls.setdefault(target, site.lineno)
+                else:
+                    caller.possible_calls.setdefault(target, site.lineno)
+                    for method in methods_by_name.get(target, []):
+                        if method != caller_name:
+                            self._symbols[method].possible_callers.add(caller_name)
 
     def _index_symbols(self) -> None:
         """Scan AST and catalog all classes, functions, and methods with complexity and dependencies."""
@@ -284,17 +508,23 @@ class ASTParser:
         self._symbols.clear()
         self._spans.clear()
         self._nodes.clear()
-        # First pass: catalog all symbols, complexity, callees, and raised exceptions
+        self._imports.clear()
+        self._top_level.clear()
+        self._class_bases.clear()
+        self._call_sites.clear()
+        self._collect_imports()
+        # First pass: catalog all symbols, complexity, call sites, and raised exceptions
         for stmt in self._tree.body:
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 self._nodes[stmt.name] = stmt
                 self._spans[stmt.name] = (_node_start(stmt), stmt.end_lineno or stmt.lineno)
+                self._top_level.add(stmt.name)
 
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 kind = "async_function" if isinstance(stmt, ast.AsyncFunctionDef) else "function"
                 has_hints = bool(stmt.returns or any(arg.annotation for arg in stmt.args.args))
                 docstring = ast.get_docstring(stmt)
-                cc, callees, excs = self._compute_metrics_and_deps(stmt)
+                cc, deps = self._compute_metrics_and_deps(stmt)
 
                 self._symbols[stmt.name] = SymbolInfo(
                     name=stmt.name,
@@ -304,10 +534,13 @@ class ASTParser:
                     docstring=docstring,
                     has_type_hints=has_hints,
                     cyclomatic_complexity=cc,
-                    callees=callees,
-                    raised_exceptions=excs,
+                    raised_exceptions=deps.raised_exceptions,
                 )
+                self._call_sites[stmt.name] = (None, deps)
             elif isinstance(stmt, ast.ClassDef):
+                self._class_bases[stmt.name] = [
+                    base for base in (_dotted_name(b) for b in stmt.bases) if base
+                ]
                 docstring = ast.get_docstring(stmt)
                 class_info = SymbolInfo(
                     name=stmt.name,
@@ -325,7 +558,7 @@ class ASTParser:
                         method_kind = "method"
                         has_hints = bool(item.returns or any(arg.annotation for arg in item.args.args))
                         m_docstring = ast.get_docstring(item)
-                        cc, callees, excs = self._compute_metrics_and_deps(item)
+                        cc, deps = self._compute_metrics_and_deps(item)
                         total_cc += cc
 
                         full_name = f"{stmt.name}.{item.name}"
@@ -340,24 +573,16 @@ class ASTParser:
                             has_type_hints=has_hints,
                             parent_class=stmt.name,
                             cyclomatic_complexity=cc,
-                            callees=callees,
-                            raised_exceptions=excs,
+                            raised_exceptions=deps.raised_exceptions,
                         )
                         self._symbols[full_name] = info
+                        self._call_sites[full_name] = (stmt.name, deps)
                         if item.name not in self._symbols:
                             self._symbols[item.name] = info
                 class_info.cyclomatic_complexity = total_cc
 
-        # Second pass: invert dependency graph to populate callers (in-degree)
-        for caller_name, caller_info in list(self._symbols.items()):
-            # Only count primary qualified names to prevent duplicate counting
-            if caller_info.parent_class and "." not in caller_name:
-                continue
-
-            for callee in caller_info.callees:
-                target = self.get_symbol_info(callee)
-                if target and target.name != caller_info.name:
-                    target.callers.add(caller_info.name)
+        # Second pass: resolve call sites to populate callers (in-degree)
+        self._link_calls()
 
     def get_symbols(self) -> dict[str, SymbolInfo]:
         """Return all cataloged symbols with metadata."""
@@ -473,6 +698,32 @@ class ASTParser:
         tree_copy.body = isolated_body
         return ast.unparse(tree_copy), self._shown_symbols(target_info)
 
+    POSSIBLE_CALLER_LIMIT: int = 10
+
+    def _cross_file_caller_lines(self, info: SymbolInfo) -> list[str]:
+        """Tier 2 header lines for callers in other files and for possible (uncounted) callers."""
+        lines: list[str] = []
+        if info.cross_file_callers:
+            lines.append(f"# Callers in other files ({len(info.cross_file_callers)}):")
+            lines.extend(
+                f"#   {c.file_path} line {c.line}: {c.symbol}"
+                for c in sorted(info.cross_file_callers, key=lambda c: (c.file_path, c.line))
+            )
+
+        local_possible = sorted(info.possible_callers - info.callers)
+        remote_possible = sorted(
+            info.possible_cross_file_callers, key=lambda c: (c.file_path, c.line)
+        )
+        if local_possible or remote_possible:
+            lines.append("# Possible callers (receiver type unknown, not counted in in-degree):")
+            entries = [f"#   {name} (this file)" for name in local_possible] + [
+                f"#   {c.file_path} line {c.line}: {c.symbol}" for c in remote_possible
+            ]
+            lines.extend(entries[: self.POSSIBLE_CALLER_LIMIT])
+            if len(entries) > self.POSSIBLE_CALLER_LIMIT:
+                lines.append(f"#   ... and {len(entries) - self.POSSIBLE_CALLER_LIMIT} more")
+        return lines
+
     def get_tier2_context(self, symbol_name: str | None = None) -> str:
         """Generate Tier 2 context: Skeleton & Call-Graph Slice.
 
@@ -495,9 +746,14 @@ class ASTParser:
                 # Only list unique primary symbols
                 if s_info.parent_class and "." not in s_name:
                     continue
+                callers = sorted(s_info.callers) + [
+                    f"{c.file_path}:{c.line} {c.symbol}" for c in sorted(
+                        s_info.cross_file_callers, key=lambda c: (c.file_path, c.line)
+                    )
+                ]
                 lines.append(
                     f"# Symbol: {s_name} | CC: {s_info.cyclomatic_complexity} | "
-                    f"Callers ({s_info.in_degree}): {sorted(s_info.callers)} | "
+                    f"Callers ({s_info.in_degree}): {callers} | "
                     f"Callees: {sorted(s_info.callees)} | "
                     f"Raises: {sorted(s_info.raised_exceptions)}"
                 )
@@ -515,7 +771,13 @@ class ASTParser:
             f"# Cyclomatic Complexity (CC): {target_info.cyclomatic_complexity}",
             f"# In-degree (Callers count): {target_info.in_degree}",
             f"# Callers: {sorted(target_info.callers)}",
+            *self._cross_file_caller_lines(target_info),
             f"# Callees: {sorted(target_info.callees)}",
+            *(
+                [f"# Calls into other modules: {sorted(target_info.external_calls)}"]
+                if target_info.external_calls
+                else []
+            ),
             f"# Raised Exceptions: {sorted(target_info.raised_exceptions)}",
             f"# ====================================================================",
             "",

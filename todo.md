@@ -138,10 +138,10 @@
 
 ## Phase 18: Cross-File and More Accurate Call Graph
 *Feature: Make "trace callers", "rename", and "deprecate" useful. Today callers are found only inside one file, and calls are matched by bare name, so any `.get(...)` is linked to any `get` method.*
-- [ ] Step 18.1: Use the index from Phase 17 to find callers in other files, following `import x` and `from x import y` to the right definition.
-- [ ] Step 18.2: Stop linking calls by bare name only: `self.method()` points to the same class; `obj.method()` with an unknown type is shown as "possible caller" and is not counted in the in-degree $x_3$.
-- [ ] Step 18.3: Show cross-file callers in Tier 2 with file path and line number, and compute $x_3$ from the cross-file caller count.
-- [ ] Step 18.4: Write tests with a small multi-file fixture: a caller in another module is found, a same-named method in an unrelated class is not counted, `self.` calls resolve to the right class.
+- [x] Step 18.1: Use the index from Phase 17 to find callers in other files, following `import x` and `from x import y` to the right definition.
+- [x] Step 18.2: Stop linking calls by bare name only: `self.method()` points to the same class; `obj.method()` with an unknown type is shown as "possible caller" and is not counted in the in-degree $x_3$.
+- [x] Step 18.3: Show cross-file callers in Tier 2 with file path and line number, and compute $x_3$ from the cross-file caller count.
+- [x] Step 18.4: Write tests with a small multi-file fixture: a caller in another module is found, a same-named method in an unrelated class is not counted, `self.` calls resolve to the right class.
 - [ ] Step 18.5: Run the full test suite and suggest commit name: `feat(parser): add cross-file call graph with import resolution`.
 
 ## Phase 19: Session Budget That Actually Limits Context (Block 5)

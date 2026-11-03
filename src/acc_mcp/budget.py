@@ -17,6 +17,10 @@ from acc_mcp.tokens import HeuristicTokenCounter, TokenCounter
 logger = logging.getLogger(__name__)
 
 
+# Bump when the cached symbol fields change, so entries written by an older parser are rebuilt
+SYMBOL_CACHE_SCHEMA = 2
+
+
 def content_hash(file_content: str) -> str:
     """SHA-256 of file text, used to tell whether a cached symbol map is still valid."""
     return hashlib.sha256(file_content.encode("utf-8")).hexdigest()
@@ -81,6 +85,9 @@ def _symbol_info_to_dict(info: SymbolInfo) -> dict[str, Any]:
         "callers": sorted(list(info.callers)),
         "callees": sorted(list(info.callees)),
         "raised_exceptions": sorted(list(info.raised_exceptions)),
+        "possible_callers": sorted(info.possible_callers),
+        "external_calls": dict(sorted(info.external_calls.items())),
+        "possible_calls": dict(sorted(info.possible_calls.items())),
         "in_degree": info.in_degree,
     }
 
@@ -99,6 +106,9 @@ def _dict_to_symbol_info(data: dict[str, Any]) -> SymbolInfo:
         callers=set(data.get("callers", [])),
         callees=set(data.get("callees", [])),
         raised_exceptions=set(data.get("raised_exceptions", [])),
+        possible_callers=set(data.get("possible_callers", [])),
+        external_calls={k: int(v) for k, v in data.get("external_calls", {}).items()},
+        possible_calls={k: int(v) for k, v in data.get("possible_calls", {}).items()},
     )
 
 
@@ -221,6 +231,7 @@ class ContextBudgetTracker:
         }
 
         self._symbol_cache[file_path] = {
+            "schema": SYMBOL_CACHE_SCHEMA,
             "file_hash": content_hash(file_content) if file_content is not None else "",
             "cached_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "symbols": serialized_symbols,
@@ -243,9 +254,12 @@ class ContextBudgetTracker:
         return list(self._symbol_cache)
 
     def get_cached_hash(self, file_path: str) -> str | None:
-        """SHA-256 the cached symbol map of file_path was built from, if any."""
+        """SHA-256 the cached symbol map of file_path was built from, if any.
+
+        Entries written with an older SYMBOL_CACHE_SCHEMA report no hash, so they get re-parsed.
+        """
         entry = self._symbol_cache.get(file_path)
-        if not entry:
+        if not entry or entry.get("schema") != SYMBOL_CACHE_SCHEMA:
             return None
         return entry.get("file_hash") or None
 

@@ -63,9 +63,9 @@ def parse_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     real_parser = index_module.ASTParser
 
     class CountingParser(real_parser):
-        def __init__(self, source_code: str, file_path: str = "") -> None:
+        def __init__(self, source_code: str, file_path: str = "", package: str | None = None) -> None:
             calls.append(Path(file_path).name)
-            super().__init__(source_code, file_path=file_path)
+            super().__init__(source_code, file_path=file_path, package=package)
 
     monkeypatch.setattr(index_module, "ASTParser", CountingParser)
     return calls

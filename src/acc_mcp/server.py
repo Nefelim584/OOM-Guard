@@ -79,7 +79,8 @@ def create_server(
 
         The decision model picks the optimal tier from your task_intent:
         - Tier 1 (signatures/docstrings): use verbs like "check", "inspect", "view", "list"
-        - Tier 2 (call-graph skeleton): use verbs like "trace", "refactor", "rename", "deprecate"
+        - Tier 2 (call-graph skeleton, with callers from other workspace files and their
+          line numbers): use verbs like "trace", "refactor", "rename", "deprecate"
         - Tier 3 (full implementation): use verbs like "fix", "debug", "rewrite", "optimize"
 
         If the returned slice is insufficient, retry with min_tier=2 or min_tier=3 to
@@ -109,9 +110,14 @@ def create_server(
 
         file_content = path_obj.read_text(encoding="utf-8")
 
-        # 3. Parse AST and cache symbol map
-        parser = ASTParser(file_content, file_path=str(path_obj))
-        budget_tracker.cache_symbols(str(path_obj), parser.get_symbols(), file_content)
+        # 3. Bring the workspace symbol cache up to date, parse the file, and add callers from other files
+        workspace_index.refresh()
+        parser = ASTParser(
+            file_content,
+            file_path=str(path_obj),
+            package=workspace_index.package_name(path_obj),
+        )
+        workspace_index.attach_cross_file_callers(path_obj, parser)
 
         # 4. Predict optimal context tier
         decision = decision_model.select_tier(

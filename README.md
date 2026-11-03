@@ -89,7 +89,7 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 ```
 
 - **Tier 1 (Signatures & Types):** Exports class headers, function signatures, type annotations, and docstrings. Function bodies are stubbed with `...`.
-- **Tier 2 (Skeleton & Call-Graph Slice):** Exports Tier 1 plus direct in-degree callers, out-degree callees, raised exceptions, and adjacent dependency signatures.
+- **Tier 2 (Skeleton & Call-Graph Slice):** Exports Tier 1 plus direct in-degree callers, out-degree callees, raised exceptions, and adjacent dependency signatures. Callers in other workspace files are found through `import x`, `import x as y`, `from x import y` and relative imports, and are listed with file path and call line. Calls are matched to a definition, not by bare name: `self.m()` / `super().m()` resolve within the class and its bases, and `obj.m()` resolves when `obj` has a parameter annotation or was assigned `Cls(...)`. An `obj.m()` call with an unknown receiver type is shown as a *possible* caller and is not counted.
 - **Tier 3 (Full Implementation Body):** Exports the requested symbol copied verbatim from the file (comments and formatting intact), plus top-level imports and, for a method, the enclosing class header. Sibling methods are listed by signature and line range instead of being shown.
 - **Edit-ready headers (all tiers):** Every slice starts with lines like `# service.py lines 40-72: PaymentService.validate`, so the agent can open or edit the exact lines. If the token ceiling cuts a Tier 3 slice, it is cut at a statement boundary and a note such as `# [ACC-MCP] lines 120-310 omitted to fit the 2000-token ceiling; request symbol_name="Router.dispatch" to see them` says what is missing. A function that is cut part-way is flagged as incomplete.
 
@@ -122,7 +122,7 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 - **Feature Vector:** $(x_1, x_2, x_3, x_4)$ where:
   - $x_1 \in \{0, 1, 2\}$: Task Intent Depth ($0 = \text{inspect/call}$, $1 = \text{refactor/patch interface}$, $2 = \text{full algorithmic rewrite}$).
   - $x_2 \in \mathbb{N}$: Cyclomatic Complexity ($CC$) of target symbol.
-  - $x_3 \in \mathbb{N}$: In-degree ($Deg_{in}$), number of callers dependent on target.
+  - $x_3 \in \mathbb{N}$: In-degree ($Deg_{in}$), number of resolved callers of the target in the same file and in other workspace files (possible callers are not counted).
   - $x_4 \in \{0, 1\}$: Presence of explicit type hints and docstrings.
 - **Logistic Scoring Function:**
   $$z = w_0 + w_1 x_1 + w_2 x_2 + w_3 x_3 - w_4 x_4$$
@@ -254,6 +254,7 @@ OOM-Guard/
 ├── tests/
 │   ├── test_parser_tier1.py      # Tier 1 AST interface tests
 │   ├── test_parser_tier2.py      # Tier 2 call-graph & complexity tests
+│   ├── test_callgraph.py         # Cross-file, import-aware call graph tests
 │   ├── test_guard.py             # Block 3 security boundary & ceiling tests
 │   ├── test_decision.py          # Block 4 scoring model & tier policy tests
 │   ├── test_decision_eval.py     # Block 4 benchmark accuracy & zero miss tests
