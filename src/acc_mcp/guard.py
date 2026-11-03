@@ -213,8 +213,10 @@ class GuardRail:
         if "alembic/migrations" in norm_str.lower():
             return True
 
-        # 5. System sensitive root paths
-        if norm_str.startswith(("/etc", "/var", "/proc", "/sys")):
+        # 5. System sensitive root paths (protecting /etc, /proc, /sys, /var while allowing user temp dirs)
+        if norm_str.startswith(("/etc", "/proc", "/sys")):
+            return True
+        if norm_str.startswith("/var/") and not norm_str.startswith(("/var/folders", "/var/tmp")):
             return True
 
         return False

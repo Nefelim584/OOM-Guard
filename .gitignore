@@ -11,4 +11,5 @@ wheels/
 
 # Runtime session files
 context_budget.json
+benchmark/temp_ledgers/
 *.tmp

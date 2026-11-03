@@ -66,11 +66,11 @@
 
 ## Phase 9: Benchmark Suite: Baseline vs. Gated Comparison (Block 9)
 *Feature: Automated evaluation running 10 programming tasks x 3 runs comparing raw retrieval vs ACC-MCP.*
-- [ ] Step 9.1: Construct benchmark task suite in `benchmark/tasks.json` with 10 standard programming tasks across small and large codebases.
-- [ ] Step 9.2: Implement benchmark runner `compare_context.py` executing 30 runs (10 tasks x 3 runs) extracting ground-truth `usage` tokens to compare Baseline (raw full file) vs Gated (ACC-MCP).
-- [ ] Step 9.3: Compute comparative metrics: mean token consumption, variance/spread, and task completion success rate.
-- [ ] Step 9.4: Capture and document a trace analysis of a Baseline context overflow failure vs Gated success.
-- [ ] Step 9.5: Run benchmark suite, verify comparative analysis output, and suggest commit name: `feat(benchmark): add 30-run comparison benchmark suite and overflow failure trace`.
+- [x] Step 9.1: Construct benchmark task suite in `benchmark/tasks.json` with 10 standard programming tasks across small and large codebases.
+- [x] Step 9.2: Implement benchmark runner `compare_context.py` executing 30 runs (10 tasks x 3 runs) extracting ground-truth `usage` tokens to compare Baseline (raw full file) vs Gated (ACC-MCP).
+- [x] Step 9.3: Compute comparative metrics: mean token consumption, variance/spread, and task completion success rate.
+- [x] Step 9.4: Capture and document a trace analysis of a Baseline context overflow failure vs Gated success.
+- [x] Step 9.5: Run benchmark suite, verify comparative analysis output, and suggest commit name: `feat(benchmark): add 30-run comparison benchmark suite and overflow failure trace`.
 
 ## Phase 10: AI-Use Logs, Documentation & Final Verification (R1-R4)
 *Feature: Transcripts in ai_log/, complete README.md, and comprehensive verification of all requirements.*
