@@ -30,8 +30,13 @@ def create_server(
     ledger_path: str | Path | None = None,
     max_tokens: int = GuardRail.DEFAULT_MAX_TOKENS,
     token_counter: TokenCounter | None = None,
+    workspace_root: str | Path | None = None,
 ) -> MCPServer:
-    """Create and configure an ACC-MCP server instance exposing context tools."""
+    """Create and configure an ACC-MCP server instance exposing context tools.
+
+    Only `.py` files inside `workspace_root` are served. When it is not given, the
+    `ACC_MCP_ROOT` env var is used, then the current working directory.
+    """
     server = MCPServer(
         name="acc-mcp",
         version="0.1.0",
@@ -41,7 +46,11 @@ def create_server(
         ),
     )
 
-    guard = GuardRail(max_tokens=max_tokens, token_counter=token_counter)
+    guard = GuardRail(
+        max_tokens=max_tokens,
+        token_counter=token_counter,
+        workspace_root=workspace_root,
+    )
     decision_model = DecisionModel()
     budget_tracker = ContextBudgetTracker(
         ledger_path=ledger_path,
@@ -78,22 +87,19 @@ def create_server(
         `# [ACC-MCP] lines a-b omitted` note says what is missing and how to get it.
 
         Args:
-            file_path: Path to the target Python source file.
+            file_path: Path to a `.py` file inside the workspace root (relative paths
+                       are taken from the root).
             task_intent: Short phrase describing what you need right now
                          (e.g. "check signature", "trace callers", "rewrite body").
             symbol_name: Optional target symbol within the file.
             min_tier: Optional floor (1, 2, or 3) for the served tier.
                       The served tier is max(model_tier, min_tier).
         """
-        # 1. Enforce Protected Path Rule
-        guard.validate_path(file_path)
+        # 1. Enforce Protected Path Rule and resolve to the real file inside the workspace
+        path_obj = guard.validate_path(file_path)
 
-        # 2. Resolve file path
-        path_obj = Path(file_path)
-        if not path_obj.is_absolute():
-            path_obj = (Path.cwd() / path_obj).resolve()
-
-        if not path_obj.exists() or not path_obj.is_file():
+        # 2. Check the file exists
+        if not path_obj.is_file():
             raise FileNotFoundError(f"File not found: {file_path}")
 
         file_content = path_obj.read_text(encoding="utf-8")

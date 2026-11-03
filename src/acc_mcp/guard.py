@@ -167,63 +167,101 @@ class GuardRail:
 
     DEFAULT_MAX_TOKENS: int = 2000
 
+    ROOT_ENV_VAR: str = "ACC_MCP_ROOT"
+
+    ALLOWED_SUFFIXES: set[str] = {
+        ".py",
+    }
+
     PROTECTED_FILENAMES: set[str] = {
         ".env",
         "credentials.json",
         "secrets.json",
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+        ".npmrc",
+        ".pypirc",
+        ".netrc",
     }
 
     PROTECTED_PREFIXES: tuple[str, ...] = (
         ".env.",
     )
 
+    PROTECTED_SUFFIXES: tuple[str, ...] = (
+        ".pem",
+        ".key",
+    )
+
     PROTECTED_DIR_PARTS: set[str] = {
         ".git",
+        ".ssh",
+        ".aws",
     }
 
     def __init__(
         self,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         token_counter: TokenCounter | None = None,
+        workspace_root: str | Path | None = None,
     ) -> None:
         self.max_tokens = max_tokens
         self.token_counter = token_counter or HeuristicTokenCounter()
 
-    def is_protected_path(self, file_path: str | Path) -> bool:
-        """Check if file_path violates Protected Path Rules."""
-        norm_str = os.path.normpath(str(file_path)).replace("\\", "/")
-        path_obj = Path(norm_str)
+        root = workspace_root or os.environ.get(self.ROOT_ENV_VAR) or Path.cwd()
+        root_path = Path(root).expanduser()
+        self._lexical_root = Path(os.path.normpath(root_path.absolute()))
+        self.workspace_root = root_path.resolve()
 
-        # 1. Exact forbidden filenames (.env, credentials.json, etc.)
-        if path_obj.name.lower() in self.PROTECTED_FILENAMES:
+    def _lexical_path(self, file_path: str | Path) -> Path:
+        """Join file_path to the workspace root and collapse `..` without following symlinks."""
+        return Path(os.path.normpath(self._lexical_root / Path(file_path).expanduser()))
+
+    def resolve_path(self, file_path: str | Path) -> Path:
+        """Return the real path of file_path (relative paths are taken from the workspace root)."""
+        return (self.workspace_root / Path(file_path).expanduser()).resolve()
+
+    def _is_denied_relative(self, relative: Path) -> bool:
+        """Apply the deny list and the `.py`-only rule to a path relative to the workspace root."""
+        name = relative.name.lower()
+        parts_lower = [p.lower() for p in relative.parts]
+
+        if relative.suffix.lower() not in self.ALLOWED_SUFFIXES:
             return True
-
-        # 2. Protected prefixes (e.g. .env.local, .env.production)
-        if path_obj.name.lower().startswith(self.PROTECTED_PREFIXES):
+        if name in self.PROTECTED_FILENAMES:
             return True
-
-        # 3. Protected directory components (.git)
-        if any(part.lower() in self.PROTECTED_DIR_PARTS for part in path_obj.parts):
+        if name.startswith(self.PROTECTED_PREFIXES) or name.endswith(self.PROTECTED_SUFFIXES):
             return True
-
-        # 4. Alembic migrations protection (e.g. alembic/migrations/...)
-        parts_lower = [p.lower() for p in path_obj.parts]
+        if any(part in self.PROTECTED_DIR_PARTS for part in parts_lower):
+            return True
         if "alembic" in parts_lower and "migrations" in parts_lower:
             return True
-        if "alembic/migrations" in norm_str.lower():
-            return True
-
-        # 5. System sensitive root paths (protecting /etc, /proc, /sys, /var while allowing user temp dirs)
-        if norm_str.startswith(("/etc", "/proc", "/sys")):
-            return True
-        if norm_str.startswith("/var/") and not norm_str.startswith(("/var/folders", "/var/tmp")):
-            return True
-
         return False
 
-    def validate_path(self, file_path: str | Path) -> None:
+    def is_protected_path(self, file_path: str | Path) -> bool:
+        """Check if file_path violates Protected Path Rules.
+
+        Both the path as sent and its real path (after symlinks) must stay inside the
+        workspace root and pass the deny list, so a link like `notes.py -> .env` is rejected.
+        """
+        candidates = (
+            (self._lexical_path(file_path), self._lexical_root),
+            (self.resolve_path(file_path), self.workspace_root),
+        )
+        for path, root in candidates:
+            if not path.is_relative_to(root):
+                return True
+            if self._is_denied_relative(path.relative_to(root)):
+                return True
+        return False
+
+    def validate_path(self, file_path: str | Path) -> Path:
         """Validate file path against Protected Path Rules.
 
+        Returns:
+            The resolved real path, which is the only path callers should read.
         Raises:
             SecurityViolationError: If file_path is forbidden.
         """
@@ -231,6 +269,7 @@ class GuardRail:
             raise SecurityViolationError(
                 f"Access to protected path '{file_path}' is denied by GuardRail."
             )
+        return self.resolve_path(file_path)
 
     @staticmethod
     def _split_comment_header(code: str) -> tuple[str, str]:

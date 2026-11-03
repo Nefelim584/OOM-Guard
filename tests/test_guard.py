@@ -1,6 +1,8 @@
 """Unit tests for GuardRail security boundaries, deterministic AST ceiling, and Tier 3 context (Block 3)."""
 
 import ast
+from pathlib import Path
+
 import pytest
 from acc_mcp.guard import GuardRail, SecurityViolationError
 from acc_mcp.parser import ASTParser
@@ -64,6 +66,121 @@ def test_guardrail_accepts_valid_paths(default_guard: GuardRail, allowed_path: s
     """Verify that legitimate application paths pass validation cleanly."""
     # Should not raise any exception
     default_guard.validate_path(allowed_path)
+
+
+# ---------------------------------------------------------------------------
+# 1b. Workspace Root, Resolved Paths, and `.py`-Only Rule (Phase 16)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "secret_path",
+    [
+        ".ssh/id_rsa",
+        ".ssh/config.py",
+        "home/.aws/credentials",
+        ".aws/boto_helper.py",
+        "certs/server.pem",
+        "keys/private.key",
+        "id_rsa",
+        "id_ed25519",
+        ".npmrc",
+        ".pypirc",
+    ],
+)
+def test_guardrail_rejects_common_secret_locations(default_guard: GuardRail, secret_path: str):
+    """Verify SSH/AWS folders, key files, and package-registry tokens are denied."""
+    with pytest.raises(SecurityViolationError):
+        default_guard.validate_path(secret_path)
+
+
+@pytest.mark.parametrize(
+    "non_python_path",
+    ["README.md", "config.yaml", "notes.txt", "settings.toml", "Makefile", "src/app.pyc"],
+)
+def test_guardrail_rejects_non_python_files(default_guard: GuardRail, non_python_path: str):
+    """Verify only `.py` files are served."""
+    with pytest.raises(SecurityViolationError):
+        default_guard.validate_path(non_python_path)
+
+
+def test_guardrail_rejects_absolute_path_outside_root(
+    default_guard: GuardRail, tmp_path_factory: pytest.TempPathFactory
+):
+    """Verify a real `.py` file in another folder is denied, even though nothing in its name is protected."""
+    outside_file = tmp_path_factory.mktemp("outside") / "service.py"
+    outside_file.write_text("def run() -> None:\n    pass\n", encoding="utf-8")
+
+    with pytest.raises(SecurityViolationError):
+        default_guard.validate_path(str(outside_file))
+
+
+@pytest.mark.parametrize("escape_path", ["../service.py", "src/../../service.py", "/tmp/service.py"])
+def test_guardrail_rejects_traversal_outside_root(default_guard: GuardRail, escape_path: str):
+    """Verify `../` tricks and absolute paths cannot leave the workspace root."""
+    with pytest.raises(SecurityViolationError):
+        default_guard.validate_path(escape_path)
+
+
+def test_guardrail_rejects_py_symlink_to_env(tmp_path: Path, default_guard: GuardRail):
+    """Verify `notes.py -> .env` is denied: the real file is checked, not only the name sent."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("API_KEY = 'sk-live-secret'\n", encoding="utf-8")
+    (tmp_path / "notes.py").symlink_to(env_file)
+
+    with pytest.raises(SecurityViolationError):
+        default_guard.validate_path("notes.py")
+
+
+def test_guardrail_rejects_symlink_leaving_root(
+    tmp_path: Path, default_guard: GuardRail, tmp_path_factory: pytest.TempPathFactory
+):
+    """Verify a symlink inside the root that points to a `.py` file outside it is denied."""
+    outside_file = tmp_path_factory.mktemp("outside") / "helpers.py"
+    outside_file.write_text("def helper() -> int:\n    return 1\n", encoding="utf-8")
+    (tmp_path / "helpers.py").symlink_to(outside_file)
+
+    with pytest.raises(SecurityViolationError):
+        default_guard.validate_path("helpers.py")
+
+
+def test_guardrail_rejects_symlinked_dir_into_git(tmp_path: Path, default_guard: GuardRail):
+    """Verify a harmless-looking folder symlinked to `.git` is denied."""
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "hook.py").write_text("print('hook')\n", encoding="utf-8")
+    (tmp_path / "scripts").symlink_to(git_dir, target_is_directory=True)
+
+    with pytest.raises(SecurityViolationError):
+        default_guard.validate_path("scripts/hook.py")
+
+
+def test_guardrail_allows_file_inside_root_and_returns_real_path(tmp_path: Path, default_guard: GuardRail):
+    """Verify a normal file inside the root passes, by relative or absolute path, and resolves to itself."""
+    source = tmp_path / "app" / "service.py"
+    source.parent.mkdir()
+    source.write_text("def run() -> None:\n    pass\n", encoding="utf-8")
+
+    assert default_guard.validate_path("app/service.py") == source.resolve()
+    assert default_guard.validate_path(str(source)) == source.resolve()
+
+
+def test_guardrail_allows_symlink_to_py_inside_root(tmp_path: Path, default_guard: GuardRail):
+    """Verify a symlink between two `.py` files inside the root is allowed and resolves to the target."""
+    real = tmp_path / "real_module.py"
+    real.write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "alias.py").symlink_to(real)
+
+    assert default_guard.validate_path("alias.py") == real.resolve()
+
+
+def test_guardrail_reads_root_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Verify `ACC_MCP_ROOT` sets the workspace root when no root is passed."""
+    monkeypatch.setenv("ACC_MCP_ROOT", str(tmp_path))
+    guard = GuardRail()
+
+    assert guard.workspace_root == tmp_path.resolve()
+    assert guard.validate_path("pkg/module.py") == (tmp_path / "pkg" / "module.py").resolve()
 
 
 # ---------------------------------------------------------------------------

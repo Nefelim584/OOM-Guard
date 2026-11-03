@@ -107,13 +107,13 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 ### Block 3: A Rule Enforced in Code (`src/acc_mcp/guard.py`)
 - **Implementation:** A deterministic safety guardrail implemented in Python before context generation or write operations.
 - **Enforced Rules:**
-  1. *Protected Path Rule:* Immediate rejection via `SecurityViolationError` if a query targets sensitive files:
+  1. *Protected Path Rule:* Only `.py` files inside the workspace root (`ACC_MCP_ROOT`, default: the server's working directory) are served. The check runs on both the path as sent and its real path after symlinks are followed, so `notes.py -> .env` is rejected. Anything else raises `SecurityViolationError`:
+     - Paths outside the root: absolute paths elsewhere, `../` traversal, symlinks that leave the root
+     - Non-Python files: `README.md`, `config.yaml`, `*.pyc`
      - Environment configs: `.env`, `.env.local`, `.env.production`
-     - Version control metadata: `.git/`, `.git/config`, `.git/HEAD`
-     - Secrets: `credentials.json`, `secrets.json`
+     - Version control metadata: `.git/`
+     - Secrets and keys: `credentials.json`, `secrets.json`, `.ssh/`, `.aws/`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, `.pypirc`
      - Database migrations: `alembic/migrations/`
-     - System paths: `/etc/passwd`, `/proc/`
-     - Path traversal attempts: `../../.env`, `foo/../../.git/config`
   2. *Hard Context Ceiling ($C_{\max} = 2{,}000$ tokens):* Under no circumstances can any generated context slice exceed 2,000 tokens. If context exceeds $C_{\max}$, it is truncated **deterministically by AST node slicing in code, not by LLM prompting.** Slices cleanly at statement and function boundaries, appending `...` while guaranteeing valid Python syntax.
 - **Evidence:** Tested with 39 automated tests in [`tests/test_guard.py`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/tests/test_guard.py).
 

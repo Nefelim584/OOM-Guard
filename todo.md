@@ -122,10 +122,10 @@
 
 ## Phase 16: Hardened Path Security (Block 3)
 *Feature: Move from "block a few known bad names" to "allow only Python files inside the workspace", and check the real file after symlinks are followed.*
-- [ ] Step 16.1: Reject any path that, after `resolve()`, is outside the workspace root from Phase 14 (absolute paths, `../` tricks, other users' folders).
-- [ ] Step 16.2: Run the protected-path checks on the resolved real path, not only on the string the agent sent, because a symlink like `notes.py -> .env` passes today and `API_KEY=...` is valid Python, so Tier 3 would return the secrets.
-- [ ] Step 16.3: Serve only `.py` files, and add common secret locations to the deny list (`.ssh/`, `.aws/`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, `.pypirc`). Remove the `/var/folders` and `/var/tmp` exception, which exists only so tests can use temp folders; let tests set a temp workspace root instead.
-- [ ] Step 16.4: Write tests in `tests/test_guard.py` for: symlink to `.env` rejected, path outside the root rejected, non-`.py` file rejected, normal file inside the root still allowed.
+- [x] Step 16.1: Reject any path that, after `resolve()`, is outside the workspace root from Phase 14 (absolute paths, `../` tricks, other users' folders).
+- [x] Step 16.2: Run the protected-path checks on the resolved real path, not only on the string the agent sent, because a symlink like `notes.py -> .env` passes today and `API_KEY=...` is valid Python, so Tier 3 would return the secrets.
+- [x] Step 16.3: Serve only `.py` files, and add common secret locations to the deny list (`.ssh/`, `.aws/`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, `.pypirc`). Remove the `/var/folders` and `/var/tmp` exception, which exists only so tests can use temp folders; let tests set a temp workspace root instead.
+- [x] Step 16.4: Write tests in `tests/test_guard.py` for: symlink to `.env` rejected, path outside the root rejected, non-`.py` file rejected, normal file inside the root still allowed.
 - [ ] Step 16.5: Run the full test suite and suggest commit name: `fix(guard): enforce workspace root and check resolved paths`.
 
 ## Phase 17: Repository Symbol Index with a Working Cache (Block 5)

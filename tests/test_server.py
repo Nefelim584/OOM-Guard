@@ -8,6 +8,12 @@ from acc_mcp.guard import SecurityViolationError
 from acc_mcp.server import create_server
 
 
+@pytest.fixture(autouse=True)
+def workspace_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("ACC_MCP_ROOT", str(tmp_path))
+    return tmp_path
+
+
 @pytest.fixture
 def temp_ledger(tmp_path: Path) -> Path:
     return tmp_path / "server_test_budget.json"
@@ -229,6 +235,24 @@ async def test_tool_security_path_rejection(temp_ledger: Path):
 
     cause = exc_info.value.__cause__ or exc_info.value
     assert isinstance(cause, SecurityViolationError)
+
+
+@pytest.mark.asyncio
+async def test_tool_rejects_py_symlink_to_env(workspace_root: Path, temp_ledger: Path):
+    """Verify a `.py` symlink pointing at `.env` never serves the secrets, even at Tier 3."""
+    (workspace_root / ".env").write_text("API_KEY = 'sk-live-secret'\n", encoding="utf-8")
+    (workspace_root / "notes.py").symlink_to(workspace_root / ".env")
+    server = create_server(ledger_path=temp_ledger)
+
+    with pytest.raises(Exception) as exc_info:
+        await server.call_tool(
+            "get_adaptive_context",
+            {"file_path": "notes.py", "task_intent": "Rewrite the module", "min_tier": 3},
+        )
+
+    cause = exc_info.value.__cause__ or exc_info.value
+    assert isinstance(cause, SecurityViolationError)
+    assert "sk-live-secret" not in str(cause)
 
 
 @pytest.mark.asyncio

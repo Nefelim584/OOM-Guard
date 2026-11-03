@@ -1,5 +1,7 @@
 """Shared pytest fixtures for ACC-MCP test suite."""
 
+from pathlib import Path
+
 import pytest
 from acc_mcp.guard import GuardRail
 from acc_mcp.parser import ASTParser
@@ -126,5 +128,5 @@ def heuristic_counter() -> HeuristicTokenCounter:
 
 
 @pytest.fixture
-def default_guard() -> GuardRail:
-    return GuardRail()
+def default_guard(tmp_path: Path) -> GuardRail:
+    return GuardRail(workspace_root=tmp_path)
