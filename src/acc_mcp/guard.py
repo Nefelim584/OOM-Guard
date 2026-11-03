@@ -232,6 +232,15 @@ class GuardRail:
                 f"Access to protected path '{file_path}' is denied by GuardRail."
             )
 
+    @staticmethod
+    def _split_comment_header(code: str) -> tuple[str, str]:
+        """Split off the leading block of `#` comment lines."""
+        lines = code.splitlines(keepends=True)
+        count = 0
+        while count < len(lines) and lines[count].startswith("#"):
+            count += 1
+        return "".join(lines[:count]), "".join(lines[count:])
+
     def _fallback_line_slice(self, text: str, limit: int) -> str:
         """Deterministic line-by-line fallback slicing for non-Python or unparseable text."""
         lines = text.splitlines(keepends=True)
@@ -255,6 +264,14 @@ class GuardRail:
 
         if self.token_counter.count_tokens(code) <= limit:
             return code
+
+        # Keep a leading comment header (slice location lines) intact and cut only the code after it
+        header, body = self._split_comment_header(code)
+        header_tokens = self.token_counter.count_tokens(header)
+        if header and body and header_tokens < limit:
+            kept = header + self.enforce_ceiling(body, max_tokens=limit - header_tokens)
+            if self.token_counter.count_tokens(kept) <= limit:
+                return kept
 
         # Attempt AST node slicing
         try:

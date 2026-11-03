@@ -114,10 +114,10 @@
 
 ## Phase 15: Edit-Ready Output with Original Source and Line Numbers
 *Feature: Return code the agent can actually edit. Right now `ast.unparse` drops comments, changes quotes and formatting, and gives no line numbers, so the agent's search-and-replace edits do not match the real file.*
-- [ ] Step 15.1: Build Tier 3 from the original file text (cut by `lineno` / `end_lineno`) instead of `ast.unparse`, so comments and formatting stay exactly as in the file.
-- [ ] Step 15.2: Start every served slice (all tiers) with a header that names the file and the line range of each symbol, e.g. `# service.py lines 40-72: PaymentService.validate`, so the agent can open or edit the exact lines.
-- [ ] Step 15.3: When the token ceiling cuts a Tier 3 slice, say clearly what was left out (e.g. `# lines 120-310 omitted, request symbol_name="Router.dispatch" to see them`) instead of only printing a generic banner, so the agent does not "fix" a function it only saw half of.
-- [ ] Step 15.4: Write tests checking that Tier 3 output is an exact substring of the source file, that comments survive, that line numbers in the header match the file, and that a cut slice reports the omitted range.
+- [x] Step 15.1: Build Tier 3 from the original file text (cut by `lineno` / `end_lineno`) instead of `ast.unparse`, so comments and formatting stay exactly as in the file.
+- [x] Step 15.2: Start every served slice (all tiers) with a header that names the file and the line range of each symbol, e.g. `# service.py lines 40-72: PaymentService.validate`, so the agent can open or edit the exact lines.
+- [x] Step 15.3: When the token ceiling cuts a Tier 3 slice, say clearly what was left out (e.g. `# lines 120-310 omitted, request symbol_name="Router.dispatch" to see them`) instead of only printing a generic banner, so the agent does not "fix" a function it only saw half of.
+- [x] Step 15.4: Write tests checking that Tier 3 output is an exact substring of the source file, that comments survive, that line numbers in the header match the file, and that a cut slice reports the omitted range.
 - [ ] Step 15.5: Run the full test suite and suggest commit name: `feat(parser): serve verbatim source with line ranges for edit-ready slices`.
 
 ## Phase 16: Hardened Path Security (Block 3)

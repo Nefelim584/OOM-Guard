@@ -108,11 +108,11 @@ def test_tier3_single_function_extraction(tier1_parser: ASTParser):
     assert isinstance(parsed, ast.Module)
 
 
-def test_tier3_method_isolation_with_sibling_stubs(tier1_parser: ASTParser):
-    """Verify Tier 3 method extraction keeps full target body while stubbing sibling methods."""
+def test_tier3_method_isolation_lists_siblings(tier1_parser: ASTParser):
+    """Verify Tier 3 method extraction keeps full target body and lists sibling methods by line range."""
     tier3_output = tier1_parser.get_tier3_context(symbol_name="DatabaseManager.connect")
 
-    # Enclosing class is present
+    # Enclosing class header is present
     assert "class DatabaseManager:" in tier3_output
     assert "connection_timeout: int = 30" in tier3_output
 
@@ -121,10 +121,14 @@ def test_tier3_method_isolation_with_sibling_stubs(tier1_parser: ASTParser):
     assert "Connecting to" in tier3_output
     assert "self.is_connected = True" in tier3_output
 
-    # Sibling method has STUBBED body
-    assert "async def execute_query" in tier3_output
+    # Sibling method is listed by signature and line range, its body is not shown
+    span = tier1_parser.get_symbol_span("DatabaseManager.execute_query")
+    assert span is not None
+    assert (
+        f"#   lines {span[0]}-{span[1]}: async def execute_query"
+        "(self, query: str, params: Optional[dict]=None) -> List[dict]"
+    ) in tier3_output
     assert "Database not connected" not in tier3_output
-    assert "..." in tier3_output
 
     # Unrelated top-level function is excluded
     assert "def compute_metrics" not in tier3_output
@@ -201,6 +205,23 @@ def test_deterministic_ast_ceiling_truncation(default_guard: GuardRail, heuristi
     # 4. Truncation must be 100% deterministic (repeated calls yield identical output)
     truncated_again = default_guard.enforce_ceiling(large_code, max_tokens=2000)
     assert truncated == truncated_again
+
+
+def test_ceiling_keeps_leading_location_header(default_guard: GuardRail, heuristic_counter: HeuristicTokenCounter):
+    """Verify AST truncation keeps the slice's leading `# file lines a-b` header lines."""
+    header = "# service.py lines 1-200: entire module\n# service.py lines 5-9: process_batch_item_0\n"
+    body = "\n".join(
+        f"def process_batch_item_{i}(data: list[int]) -> int:\n"
+        f"    return sum(x * {i} for x in data)\n"
+        for i in range(80)
+    )
+
+    truncated = default_guard.enforce_ceiling(header + body, max_tokens=300)
+
+    assert truncated.startswith(header)
+    assert heuristic_counter.count_tokens(truncated) <= 300
+    assert "# [ACC-MCP] Context truncated" in truncated
+    assert isinstance(ast.parse(truncated), ast.Module)
 
 
 def test_ceiling_single_large_function_body_slicing(default_guard: GuardRail, heuristic_counter: HeuristicTokenCounter):

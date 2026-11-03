@@ -287,6 +287,12 @@ class DecisionModel:
             raw_context = parser.get_tier1_context(symbol_name=symbol_name)
         elif decision.tier == 2:
             raw_context = parser.get_tier2_context(symbol_name=symbol_name)
+        elif guard is not None:
+            raw_context = parser.get_tier3_context(
+                symbol_name=symbol_name,
+                max_tokens=guard.max_tokens,
+                token_counter=guard.token_counter,
+            )
         else:
             raw_context = parser.get_tier3_context(symbol_name=symbol_name)
 

@@ -72,6 +72,11 @@ def create_server(
         escalate without changing your task_intent.  The model's own choice is never
         lowered below min_tier, but min_tier cannot lower it either.
 
+        Every slice starts with `# <file> lines a-b: <symbol>` lines giving the real
+        line ranges. Tier 3 is copied verbatim from the file, so it can be used for
+        exact search-and-replace edits. If a slice is cut to fit the token ceiling, a
+        `# [ACC-MCP] lines a-b omitted` note says what is missing and how to get it.
+
         Args:
             file_path: Path to the target Python source file.
             task_intent: Short phrase describing what you need right now
@@ -116,7 +121,11 @@ def create_server(
         elif served_tier == 2:
             raw_context = parser.get_tier2_context(symbol_name=symbol_name)
         else:
-            raw_context = parser.get_tier3_context(symbol_name=symbol_name)
+            raw_context = parser.get_tier3_context(
+                symbol_name=symbol_name,
+                max_tokens=guard.max_tokens,
+                token_counter=guard.token_counter,
+            )
 
         # 7. Enforce deterministic token ceiling
         final_context = guard.enforce_ceiling(raw_context)

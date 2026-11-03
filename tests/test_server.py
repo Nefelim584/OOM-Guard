@@ -391,6 +391,37 @@ async def test_min_tier_none_behaves_as_before(sample_source_file: Path, temp_le
 
 
 @pytest.mark.asyncio
+async def test_tier3_cut_reports_omitted_lines(tmp_path: Path, temp_ledger: Path):
+    """Verify an oversized Tier 3 slice is cut verbatim and names the omitted line range."""
+    big_file = tmp_path / "big_module.py"
+    big_file.write_text(
+        "\n".join(
+            f"def step_{i}(values: list[int]) -> int:\n"
+            f"    kept = [v for v in values if v > {i}]  # filter step {i}\n"
+            f"    return sum(kept)\n"
+            for i in range(40)
+        ),
+        encoding="utf-8",
+    )
+    server = create_server(ledger_path=temp_ledger, max_tokens=250)
+
+    result = await server.call_tool(
+        "get_adaptive_context",
+        {
+            "file_path": str(big_file),
+            "task_intent": "Rewrite the module",
+            "min_tier": 3,
+        },
+    )
+
+    text = result.content[0].text
+    assert text.startswith("# big_module.py lines 1-")
+    assert "# filter step 0" in text
+    assert "omitted to fit the 250-token ceiling; request symbol_name=" in text
+    assert "Context truncated" not in text
+
+
+@pytest.mark.asyncio
 async def test_min_tier_clamped_to_valid_range(sample_source_file: Path, temp_ledger: Path):
     """Verify out-of-range min_tier values are clamped to [1, 3]."""
     server = create_server(ledger_path=temp_ledger)
