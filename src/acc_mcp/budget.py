@@ -31,7 +31,6 @@ class RetrievalRecord:
     served_tokens: int
     tokens_saved: int
     savings_percentage: float
-    ground_truth_tokens: int | None = None
     requested_min_tier: int | None = None
     model_tier: int | None = None
 
@@ -58,7 +57,6 @@ class RetrievalRecord:
             served_tokens=int(data["served_tokens"]),
             tokens_saved=int(data["tokens_saved"]),
             savings_percentage=float(data["savings_percentage"]),
-            ground_truth_tokens=data.get("ground_truth_tokens"),
             requested_min_tier=data.get("requested_min_tier"),
             model_tier=data.get("model_tier"),
         )
@@ -201,16 +199,6 @@ class ContextBudgetTracker:
             self.save_ledger()
 
         return record
-
-    def reconcile_usage(self, query_id: str, ground_truth_tokens: int) -> bool:
-        """Reconcile pre-flight token estimate with post-call harness prompt token usage."""
-        for r in self.history:
-            if r.query_id == query_id:
-                r.ground_truth_tokens = ground_truth_tokens
-                if self.auto_save:
-                    self.save_ledger()
-                return True
-        return False
 
     def cache_symbols(
         self,

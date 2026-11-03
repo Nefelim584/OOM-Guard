@@ -108,8 +108,8 @@ $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{
 * **Implementation:** Built using the standard Python `mcp` SDK via stdio transport.
 * **Exposed Tools:**
   * `get_adaptive_context(file_path: str, task_intent: str, symbol_name: str | None)`: Runs the decision model and returns the optimal AST slice.
-  * `get_token_ledger()`: Returns the cumulative token audit log for the current harness session.
-* **Evidence:** Execution trace showing an agent harness initializing the connection, issuing an MCP call, and receiving the compressed payload.
+  * `get_token_ledger()`: Returns the cumulative token audit log for the current session.
+* **Evidence:** Integration tests in `tests/test_server.py`; a real agent session trace comes from the Pi runs in Phase 14.
 
 ### Block 3: A Rule Enforced in Code
 * **Implementation:** A deterministic safety guardrail implemented in Python before context generation or write operations.
@@ -130,12 +130,12 @@ $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{
   * Persists session cache summaries to a local `context_budget.json` ledger.
   * Restart test: Demonstrates that upon agent restart, the server retains the repository's symbol map and token statistics without re-parsing files.
 
-### Block 9: A Measured Comparison (Benchmark)
-* **Implementation:** A reproducible evaluation script (`compare_context.py`) running **10 standard programming tasks** across **3 runs each** (30 runs total).
+### Block 9: A Measured Comparison
+* **Implementation:** Manual evaluation with the Pi coding agent on real Python tasks that come with tests (see Phase 14 in `todo.md`).
 * **Comparison:**
-  * **Baseline:** Raw Qwen3.5-4B provided with full source files.
-  * **Gated:** Qwen3.5-4B assisted by ACC-MCP.
-* **Reported Metrics:** Mean token consumption, variance/spread, task completion success rate, and one detailed trace analysis of a baseline failure caused by context overflow.
+  * **Baseline:** Plain Pi with Qwen3.5-4B.
+  * **Gated:** Pi with Qwen3.5-4B and ACC-MCP.
+* **Reported Metrics:** Whether the task's tests pass, prompt tokens used, tiers served, and how often the agent escalated with `min_tier`.
 
 ---
 

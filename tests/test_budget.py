@@ -101,28 +101,6 @@ def test_multi_turn_retrieval_accounting(tracker: ContextBudgetTracker):
     assert dist[3] == 1
 
 
-def test_reconcile_ground_truth_usage(tracker: ContextBudgetTracker):
-    """Verify pre-flight records can be updated with ground-truth LLM harness usage."""
-    record = tracker.record_retrieval(
-        file_path="src/api.py",
-        symbol_name="handle",
-        task_intent="Inspect",
-        served_tier=1,
-        baseline_content="def handle(): pass\n" * 5,
-        served_content="def handle(): ...\n",
-        query_id="q_target",
-    )
-    assert record.ground_truth_tokens is None
-
-    # Reconcile with prompt_tokens from model response
-    success = tracker.reconcile_usage("q_target", ground_truth_tokens=42)
-    assert success is True
-    assert record.ground_truth_tokens == 42
-
-    # Nonexistent query
-    assert tracker.reconcile_usage("q_nonexistent", 100) is False
-
-
 # ---------------------------------------------------------------------------
 # 2. JSON Persistence & Ledger Export (Step 6.2)
 # ---------------------------------------------------------------------------

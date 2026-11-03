@@ -57,7 +57,7 @@ This creates two critical points of failure:
                                ▼
 ┌────────────────────────────────────────────────────────┐
 │             Qwen3.5-4B Generates Solution              │
-│       (Using 60–95% Fewer Tokens, Zero Overflow)       │
+│           (From a Compressed, Bounded Context)         │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -139,25 +139,13 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 - **Mechanisms:**
   - Tracks per-query token consumption and relative token savings:
     $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{\text{Served Tier}}}{\text{Tokens}_{\text{Full File}}} \times 100\%$$
-  - Reconciles pre-flight estimates with ground-truth LLM response tokens (`usage.prompt_tokens`).
   - Persists multi-turn ledger and session summaries to `context_budget.json`.
   - **Cold Restart Test:** Demonstrates that upon process restart, the server retains the repository's symbol map (names, complexities, callers, callees, raised exceptions) and token statistics without re-parsing files.
 - **Evidence:** Tested with unit and restart recovery tests in [`tests/test_budget.py`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/tests/test_budget.py).
 
-### Block 9: A Measured Comparison (`compare_context.py`)
-- **Implementation:** A reproducible evaluation script executing **10 standard programming tasks $\times$ 3 runs each** (30 runs Baseline vs 30 runs Gated = **60 runs total**).
-- **Comparison:**
-  - **Baseline:** Raw full files provided in prompt context (context window limit: 8,192 tokens).
-  - **Gated:** Adaptive context slices served by ACC-MCP (hard ceiling: 2,000 tokens).
-- **Empirical Results:**
-  - **Baseline Mean Token Consumption:** 2,251.4 tokens (Spread: $\pm$6,055.9, Variance: 36,674,312.7)
-  - **Gated Mean Token Consumption:** 191.6 tokens (Spread: $\pm$97.8, Variance: 9,572.1)
-  - **Overall Relative Token Reduction:** **91.49%**
-  - **Baseline Success Rate:** **90.0%** (Crashed on oversized codebase due to 8k window overflow)
-  - **Gated Success Rate:** **100.0%** (100% completion success across all 30 runs)
-- **Detailed Trace Analysis ([`benchmark/trace_overflow_analysis.md`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/benchmark/trace_overflow_analysis.md)):**
-  - On Task 10 (`Enterprise Monolith Router`, 20,090 raw tokens), the Baseline crashed with `ContextWindowOverflowError: Prompt tokens (20,112) exceeded model context window limit (8192 tokens)`.
-  - ACC-MCP extracted only the targeted `health_check` interface (56 tokens), achieving a **99.72% token reduction** and enabling the model to complete the query cleanly.
+### Block 9: A Measured Comparison (Manual Evaluation with Pi)
+- **Status:** Evaluation is done manually with the Pi coding agent (plain Pi vs Pi + ACC-MCP) on real Python tasks that come with tests. The protocol and results will live in `eval/` (see Phase 14 in `todo.md`).
+- An earlier simulated benchmark was removed: it marked every gated run as a success without checking the model's answer, and one generated file produced most of its reported saving.
 
 ---
 
@@ -165,10 +153,10 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 
 | Requirement | Description | Status | Evidence |
 | :--- | :--- | :---: | :--- |
-| **R1 (It Runs)** | Runs locally against `llama-server` (Qwen3.5-4B) or Ollama/Cerebras fallback. | **VERIFIED** | Model-agnostic harness (`src/acc_mcp/harness.py`), local setup guide below. |
+| **R1 (It Runs)** | Runs locally against `llama-server` (Qwen3.5-4B) or Ollama/Cerebras fallback. | **PENDING** | Stdio MCP server (`src/acc_mcp/server.py`), local setup guide below; real-agent (Pi) setup in Phase 14. |
 | **R2 (Automated Tests)** | Comprehensive `pytest` suite testing parser, decision model, guardrails, and server. | **VERIFIED** | **110 passing tests** across 8 test suites running in ~1.0 second. |
 | **R3 (AI-Use Log)** | Work session transcripts recorded in `ai_log/` with prompt refinements and code fixes. | **VERIFIED** | Full chronology & annotations in [`ai_log/AI_USE_LOG.md`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/ai_log/AI_USE_LOG.md). |
-| **R4 (Defence Readiness)** | Clean, modular code layout with strict separation of concerns. | **VERIFIED** | Clean package layout: `parser.py`, `guard.py`, `decision.py`, `budget.py`, `server.py`, `harness.py`. |
+| **R4 (Defence Readiness)** | Clean, modular code layout with strict separation of concerns. | **VERIFIED** | Clean package layout: `parser.py`, `guard.py`, `decision.py`, `budget.py`, `server.py`. |
 
 ---
 
@@ -206,15 +194,6 @@ python3 -m pytest
 python3 src/acc_mcp/evaluate_decision.py
 ```
 
-### 4. Running the 30-Run Baseline vs Gated Comparison Benchmark (Block 9)
-```bash
-# Run reproducible benchmark (simulated deterministic mock)
-python3 compare_context.py
-
-# Or against an active local llama-server runner
-python3 compare_context.py --live --backend llama-server --url http://127.0.0.1:8080/v1 --model qwen3.5-4b
-```
-
 ---
 
 ## 7. Connecting ACC-MCP to Your Agent or IDE (R1)
@@ -228,26 +207,13 @@ python3 compare_context.py --live --backend llama-server --url http://127.0.0.1:
    ```bash
    ./llama-server -m ./models/qwen2.5-coder-3b-instruct-q4_k_m.gguf -c 8192 --port 8080
    ```
-3. Run the Agent Harness:
-   ```python
-   from acc_mcp.harness import AgentHarness, BackendConfig
-
-   harness = AgentHarness(backend_config=BackendConfig.llama_server())
-   trace = await harness.execute_task(
-       file_path="src/service.py",
-       task_intent="Inspect payment validation method arguments",
-       symbol_name="validate_payment",
-   )
-   print(trace.format_markdown())
-   ```
+3. Point an MCP-capable coding agent at that endpoint and register ACC-MCP as a stdio server (see Option C). Step-by-step Pi coding agent setup is added in Phase 14.
 
 ### Option B: Running against `Ollama`
 ```bash
 ollama run qwen2.5-coder:3b
 ```
-```python
-harness = AgentHarness(backend_config=BackendConfig.ollama())
-```
+Then register ACC-MCP with your agent as in Option C.
 
 ### Option C: Configuring in Claude Desktop / Cursor / Antigravity IDE (Stdio MCP)
 Add ACC-MCP to your MCP settings file (`claude_desktop_config.json` or `mcp_servers.json`):
@@ -278,16 +244,9 @@ OOM-Guard/
 │       ├── decision.py           # Block 4: Intent classifier & logistic scoring
 │       ├── evaluate_decision.py  # Block 4: Ground-truth benchmark evaluation
 │       ├── budget.py             # Block 5: Token ledger & restart recovery cache
-│       ├── server.py             # Block 2: Stdio MCP Server (get_adaptive_context)
-│       └── harness.py            # R1: Model-agnostic agent harness client
+│       └── server.py             # Block 2: Stdio MCP Server (get_adaptive_context)
 ├── data/
 │   └── decision_dataset.json     # 20 ground-truth coding benchmark tasks
-├── benchmark/
-│   ├── tasks.json                # 10 benchmark tasks (small, medium, large, oversized)
-│   ├── codebases/                # Generated codebase source files
-│   ├── results.json              # Full 60-run comparative execution metrics
-│   ├── REPORT.md                 # Formatted Block 9 comparison report
-│   └── trace_overflow_analysis.md# Baseline overflow vs gated success analysis
 ├── tests/
 │   ├── test_parser_tier1.py      # Tier 1 AST interface tests
 │   ├── test_parser_tier2.py      # Tier 2 call-graph & complexity tests
@@ -295,12 +254,9 @@ OOM-Guard/
 │   ├── test_decision.py          # Block 4 scoring model & tier policy tests
 │   ├── test_decision_eval.py     # Block 4 benchmark accuracy & zero miss tests
 │   ├── test_budget.py            # Block 5 multi-turn ledger & restart tests
-│   ├── test_server.py            # Block 2 MCP protocol & tool integration tests
-│   ├── test_harness.py           # R1 agent workflow & trace logger tests
-│   └── test_benchmark.py         # Block 9 benchmark suite verification tests
+│   └── test_server.py            # Block 2 MCP protocol & tool integration tests
 ├── ai_log/
 │   └── AI_USE_LOG.md             # R3: Complete transcript of AI prompts & fixes
-├── compare_context.py            # Block 9: 30-run comparison benchmark runner
 ├── pyproject.toml                # Project metadata & pytest configuration
 ├── todo.md                       # 10-phase project implementation roadmap
 └── README.md                     # Comprehensive project documentation

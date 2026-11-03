@@ -96,10 +96,82 @@
 - [x] Step 12.4: Write tests in `tests/test_server.py` verifying that `min_tier=3` raises an inspection query to Tier 3, that a `min_tier` below the model's own choice never lowers the tier, and that the ledger stores both values.
 - [x] Step 12.5: Run the full test suite, verify escalation behavior passes, and suggest commit name: `feat(server): add min_tier escalation parameter and intent guidance`.
 
-## Phase 13: Honest Calibration of the Decision Model
+## Phase 13: Remove the Synthetic Benchmark and In-Process Harness
+*Feature: Drop the simulated comparison, because it marks every gated run as a success, never checks the model's answer, and gets most of its 91% saving from one generated 20k-token file. Real testing moves to the Pi coding agent.*
+- [x] Step 13.1: Delete `compare_context.py`, the whole `benchmark/` folder (`tasks.json`, `codebases/`, `results.json`, `REPORT.md`, `trace_overflow_analysis.md`, `temp_ledgers/`), and `tests/test_benchmark.py`.
+- [x] Step 13.2: Delete `src/acc_mcp/harness.py` and `tests/test_harness.py`, because the harness calls the server in-process, always calls the tool exactly once, and never lets the model decide when to call it or escalate. Pi becomes the real harness. Remove the harness exports from `src/acc_mcp/__init__.py`.
+- [x] Step 13.3: Remove `ContextBudgetTracker.reconcile_usage` and the `ground_truth_tokens` field if nothing else uses them after the harness is gone, so no dead code is left behind.
+- [x] Step 13.4: Remove the Block 9 section, the benchmark numbers (91.49%, 100% success, "zero overflow"), and the benchmark run commands from `README.md` and `Description.md`; leave a short note that evaluation is done manually with Pi (see Phase 14).
+- [ ] Step 13.5: Run the full test suite, confirm nothing still imports the removed modules, and suggest commit name: `chore(benchmark): remove synthetic benchmark and in-process harness`.
+
+## Phase 14: Pi Coding Agent Integration and Manual Evaluation Protocol
+*Feature: Run ACC-MCP inside a real agent (Pi + local Qwen via `llama-server`) and define a repeatable manual test on real coding tasks, which replaces the old Block 9 comparison.*
+- [ ] Step 14.1: Add a workspace root setting (`ACC_MCP_ROOT` env var or `--root` CLI argument) and resolve relative `file_path` values against it instead of the server's current working directory, because the agent and the server usually run from different folders.
+- [ ] Step 14.2: Add an `ACC_MCP_LEDGER` env var for the ledger path, so every manual run can write its own ledger file instead of mixing all runs into one `context_budget.json` in the current folder.
+- [ ] Step 14.3: Connect ACC-MCP to the Pi coding agent over stdio (Pi has no built-in MCP support, so use its MCP adapter extension) with Qwen running on `llama-server`, and write the exact setup steps in `README.md`.
+- [ ] Step 14.4: Write `eval/PROTOCOL.md`: pick about 10 Python tasks from a public coding benchmark that come with tests (for example SWE-bench Lite or the Python exercises from the Aider benchmark), run each one with plain Pi and with Pi + ACC-MCP, and record in `eval/results.md`: did the tests pass, prompt tokens used, which tiers were served, and how often the agent escalated with `min_tier`.
+- [ ] Step 14.5: Add one integration test that starts the server as a real subprocess and talks to it through the `mcp` stdio client (current tests only call it in-process), run the full test suite, and suggest commit name: `feat(server): add workspace root, per-run ledger, and Pi agent setup`.
+
+## Phase 15: Edit-Ready Output with Original Source and Line Numbers
+*Feature: Return code the agent can actually edit. Right now `ast.unparse` drops comments, changes quotes and formatting, and gives no line numbers, so the agent's search-and-replace edits do not match the real file.*
+- [ ] Step 15.1: Build Tier 3 from the original file text (cut by `lineno` / `end_lineno`) instead of `ast.unparse`, so comments and formatting stay exactly as in the file.
+- [ ] Step 15.2: Start every served slice (all tiers) with a header that names the file and the line range of each symbol, e.g. `# service.py lines 40-72: PaymentService.validate`, so the agent can open or edit the exact lines.
+- [ ] Step 15.3: When the token ceiling cuts a Tier 3 slice, say clearly what was left out (e.g. `# lines 120-310 omitted, request symbol_name="Router.dispatch" to see them`) instead of only printing a generic banner, so the agent does not "fix" a function it only saw half of.
+- [ ] Step 15.4: Write tests checking that Tier 3 output is an exact substring of the source file, that comments survive, that line numbers in the header match the file, and that a cut slice reports the omitted range.
+- [ ] Step 15.5: Run the full test suite and suggest commit name: `feat(parser): serve verbatim source with line ranges for edit-ready slices`.
+
+## Phase 16: Hardened Path Security (Block 3)
+*Feature: Move from "block a few known bad names" to "allow only Python files inside the workspace", and check the real file after symlinks are followed.*
+- [ ] Step 16.1: Reject any path that, after `resolve()`, is outside the workspace root from Phase 14 (absolute paths, `../` tricks, other users' folders).
+- [ ] Step 16.2: Run the protected-path checks on the resolved real path, not only on the string the agent sent, because a symlink like `notes.py -> .env` passes today and `API_KEY=...` is valid Python, so Tier 3 would return the secrets.
+- [ ] Step 16.3: Serve only `.py` files, and add common secret locations to the deny list (`.ssh/`, `.aws/`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, `.pypirc`). Remove the `/var/folders` and `/var/tmp` exception, which exists only so tests can use temp folders; let tests set a temp workspace root instead.
+- [ ] Step 16.4: Write tests in `tests/test_guard.py` for: symlink to `.env` rejected, path outside the root rejected, non-`.py` file rejected, normal file inside the root still allowed.
+- [ ] Step 16.5: Run the full test suite and suggest commit name: `fix(guard): enforce workspace root and check resolved paths`.
+
+## Phase 17: Repository Symbol Index with a Working Cache (Block 5)
+*Feature: Index the whole workspace once and reuse it after restarts. Today `get_cached_symbols` is never called and the server re-parses the file on every request, so the "restart without re-parsing" claim is not true in practice.*
+- [ ] Step 17.1: Add a workspace indexer that walks all `.py` files under the root (skipping `.venv`, `.git`, `__pycache__`, `node_modules`) and stores a symbol map per file.
+- [ ] Step 17.2: Before parsing a file, compare its SHA-256 with the cached `file_hash`; reuse the cached symbols when it matches and re-parse only changed files.
+- [ ] Step 17.3: Expose a new MCP tool `find_symbol(name)` that returns file path, kind, and line range, so the agent can find code without knowing the file first.
+- [ ] Step 17.4: Write tests checking that a restarted server does not re-parse unchanged files (count parser calls), that an edited file is re-indexed, and that `find_symbol` returns the right location.
+- [ ] Step 17.5: Run the full test suite and suggest commit name: `feat(index): add repository symbol index with hash-checked cache and find_symbol tool`.
+
+## Phase 18: Cross-File and More Accurate Call Graph
+*Feature: Make "trace callers", "rename", and "deprecate" useful. Today callers are found only inside one file, and calls are matched by bare name, so any `.get(...)` is linked to any `get` method.*
+- [ ] Step 18.1: Use the index from Phase 17 to find callers in other files, following `import x` and `from x import y` to the right definition.
+- [ ] Step 18.2: Stop linking calls by bare name only: `self.method()` points to the same class; `obj.method()` with an unknown type is shown as "possible caller" and is not counted in the in-degree $x_3$.
+- [ ] Step 18.3: Show cross-file callers in Tier 2 with file path and line number, and compute $x_3$ from the cross-file caller count.
+- [ ] Step 18.4: Write tests with a small multi-file fixture: a caller in another module is found, a same-named method in an unrelated class is not counted, `self.` calls resolve to the right class.
+- [ ] Step 18.5: Run the full test suite and suggest commit name: `feat(parser): add cross-file call graph with import resolution`.
+
+## Phase 19: Session Budget That Actually Limits Context (Block 5)
+*Feature: Make the budget control what is served, not only log it. Today the 2,000-token ceiling applies to one slice, but nothing stops ten slices from filling an 8k window.*
+- [ ] Step 19.1: Track the running total of tokens served in the current session against a configurable session budget (e.g. 6,000 tokens for ACC-MCP output inside an 8k window). The server only sees its own output, so this is a share of the window, not the whole window.
+- [ ] Step 19.2: Pass the remaining budget into tier selection: if the chosen tier does not fit, step down one tier and say so in the slice header; the ceiling becomes `min(C_max, remaining)`. If `min_tier` asks for more than fits, return a clear message instead of silently cutting.
+- [ ] Step 19.3: Add a `reset_session` tool so a new Pi task starts with a fresh budget, and save the ledger once per request instead of twice (now both `cache_symbols` and `record_retrieval` rewrite the whole file); keep only the last N history records while keeping the totals.
+- [ ] Step 19.4: Write tests in `tests/test_budget.py` and `tests/test_server.py` for: tier steps down when the budget is low, `reset_session` restores the budget, one save per request, history cap keeps correct totals.
+- [ ] Step 19.5: Run the full test suite and suggest commit name: `feat(budget): make session budget drive tier selection`.
+
+## Phase 20: Decision Model Quick Fixes and Honest Reporting (Block 4)
+*Feature: Fix the cheap, obvious problems in the classifier and its evaluation before the heavier refit in Phase 21.*
+- [ ] Step 20.1: Replace the binary 2x2 confusion matrix with a 3x3 one (Tier 1 / 2 / 3), because mistakes between Tier 1 and Tier 2 are not measured today.
+- [ ] Step 20.2: Fix wrong keyword hits: `\badd\w*` matches "address", `\blist\w*` matches "list[int]", `\btype\w*` matches "typed dict"; use exact word forms, and add test cases for each false hit.
+- [ ] Step 20.3: Add `escalation_rate` (how often the agent had to raise `min_tier`) to the `get_token_ledger` summary, so the Pi runs from Phase 14 give a real miss-rate number.
+- [ ] Step 20.4: State plainly in `README.md` that the weights are hand-picked, that the 20-task result is measured on the same tasks used to pick them, and that today the tier is decided almost only by the verb in `task_intent` ($x_1 = 1$ can never reach Tier 1, $x_1 = 2$ is always Tier 3).
+- [ ] Step 20.5: Run the full test suite and suggest commit name: `fix(decision): 3-tier confusion matrix, keyword fixes, and escalation rate`.
+
+## Phase 21: Honest Calibration of the Decision Model
 *Feature: Turn Block 4 from hand-picked weights measured on their own dataset into a model that is fitted on training data and reported on data it has never seen.*
-- [ ] Step 13.1: Expand `data/decision_dataset.json` to roughly 100 short task intents labeled with a ground-truth tier, since the classifier reads text and 20 examples over 4 features cannot support a 100% accuracy claim.
-- [ ] Step 13.2: Add a 70/30 train/holdout split, stratified by ground-truth tier, so every tier is represented on both sides.
-- [ ] Step 13.3: Fit the four weights ($w_0 \dots w_4$) with plain gradient descent on the train split instead of setting them by hand (about 20 lines, no new dependencies), and check whether $x_2$, $x_3$, and $x_4$ now influence the outcome at all.
-- [ ] Step 13.4: Report accuracy, confusion matrix, miss rate, and false alarm rate separately for train and holdout; update the assertions in `tests/test_decision.py` (lines 161-175 pin tiers to the old weights) and `tests/test_decision_eval.py` (lines 126-149 and the literal `TN = 10` / `TP = 10` checks assume the 20-task dataset).
-- [ ] Step 13.5: Run the full test suite, put the holdout numbers in `README.md` whatever they turn out to be, and suggest commit name: `feat(decision): fit logistic weights on held-out split with expanded intent dataset`.
+- [ ] Step 21.1: Expand `data/decision_dataset.json` to roughly 100 short task intents labeled with a ground-truth tier, since the classifier reads text and 20 examples over 4 features cannot support a 100% accuracy claim. Include real `task_intent` strings collected from the Pi runs in Phase 14.
+- [ ] Step 21.2: Add a 70/30 train/holdout split, stratified by ground-truth tier, so every tier is represented on both sides.
+- [ ] Step 21.3: Fit the four weights ($w_0 \dots w_4$) with plain gradient descent on the train split instead of setting them by hand (about 20 lines, no new dependencies), and check whether $x_2$, $x_3$, and $x_4$ now influence the outcome at all.
+- [ ] Step 21.4: Report accuracy, the 3x3 confusion matrix from Phase 20, miss rate, and false alarm rate separately for train and holdout; update the assertions in `tests/test_decision.py` (which pin tiers to the old weights) and `tests/test_decision_eval.py` (which assume the 20-task dataset).
+- [ ] Step 21.5: Run the full test suite, put the holdout numbers in `README.md` whatever they turn out to be, and suggest commit name: `feat(decision): fit logistic weights on held-out split with expanded intent dataset`.
+
+## Phase 22: Documentation Cleanup and Final Verification (R1-R4)
+*Feature: Make the README match the code, and remove claims the project cannot back up.*
+- [ ] Step 22.1: Fix factual mismatches in `README.md`: the target model says Qwen3.5-4B but the download command fetches Qwen2.5-Coder-3B; the MIT badge points to a `LICENSE` file that does not exist (add it); the test-count badge is out of date.
+- [ ] Step 22.2: Replace all `file:///Users/...` links with relative links so they work on GitHub, and update the architecture diagram, tool list (`find_symbol`, `reset_session`), and repository layout to the current code.
+- [ ] Step 22.3: Update `Description.md` so Block 9 describes the manual Pi evaluation and points to `eval/results.md`, and add the new work sessions to `ai_log/AI_USE_LOG.md`.
+- [ ] Step 22.4: Re-check every requirement (Blocks 2, 3, 4, 5, 9 and R1-R4) against the code and the Pi results, and remove any README sentence that no longer has evidence behind it.
+- [ ] Step 22.5: Run the full test suite, ensure a clean git state, and suggest commit name: `docs: align README with code and manual Pi evaluation results`.
