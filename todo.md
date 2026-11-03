@@ -50,11 +50,11 @@
 
 ## Phase 7: Model Context Protocol (MCP) Server Integration (Block 2)
 *Feature: Stdio MCP server exposing adaptive context slicing and token audit ledger tools.*
-- [ ] Step 7.1: Implement MCP server using Python `mcp` SDK via stdio transport in `src/acc_mcp/server.py`.
-- [ ] Step 7.2: Implement and expose MCP tool `get_adaptive_context(file_path: str, task_intent: str, symbol_name: str | None)`.
-- [ ] Step 7.3: Implement and expose MCP tool `get_token_ledger()`.
-- [ ] Step 7.4: Write integration tests in `tests/test_server.py` verifying MCP client connection, tool discovery, and tool execution.
-- [ ] Step 7.5: Run test suite, verify MCP protocol integration passes, and suggest commit name: `feat(server): expose get_adaptive_context and get_token_ledger via MCP stdio server`.
+- [x] Step 7.1: Implement MCP server using Python `mcp` SDK via stdio transport in `src/acc_mcp/server.py`.
+- [x] Step 7.2: Implement and expose MCP tool `get_adaptive_context(file_path: str, task_intent: str, symbol_name: str | None)`.
+- [x] Step 7.3: Implement and expose MCP tool `get_token_ledger()`.
+- [x] Step 7.4: Write integration tests in `tests/test_server.py` verifying MCP client connection, tool discovery, and tool execution.
+- [x] Step 7.5: Run test suite, verify MCP protocol integration passes, and suggest commit name: `feat(server): expose get_adaptive_context and get_token_ledger via MCP stdio server`.
 
 ## Phase 8: Agent Harness & Local LLM Integration (R1)
 *Feature: Model-agnostic agent harness connecting ACC-MCP with standard OpenAI-compatible endpoints.*

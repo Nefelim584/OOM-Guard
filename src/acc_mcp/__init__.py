@@ -10,6 +10,7 @@ from acc_mcp.decision import (
 from acc_mcp.evaluate_decision import DecisionEvaluator, EvaluationMetrics
 from acc_mcp.guard import GuardRail, SecurityViolationError
 from acc_mcp.parser import ASTParser, SymbolInfo
+from acc_mcp.server import create_server, run_server
 from acc_mcp.tokens import (
     EndpointTokenCounter,
     HeuristicTokenCounter,
@@ -35,4 +36,6 @@ __all__ = [
     "EvaluationMetrics",
     "ContextBudgetTracker",
     "RetrievalRecord",
+    "create_server",
+    "run_server",
 ]
