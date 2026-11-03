@@ -42,11 +42,11 @@
 
 ## Phase 6: Session Context Budget Tracker & Persistent Ledger (Block 5)
 *Feature: Multi-turn token accounting, savings calculation, and persistent JSON ledger with restart recovery.*
-- [ ] Step 6.1: Implement `ContextBudgetTracker` in `src/acc_mcp/budget.py` tracking pre-flight estimates and reconciling ground-truth token usage from harness responses.
-- [ ] Step 6.2: Implement persistent session caching and ledger export to `context_budget.json`.
-- [ ] Step 6.3: Implement repository symbol map caching to retain AST statistics across agent restarts without re-parsing files.
-- [ ] Step 6.4: Write unit tests in `tests/test_budget.py` verifying budget calculations, JSON persistence, and restart state recovery.
-- [ ] Step 6.5: Run test suite, verify budget ledger and restart behavior pass, and suggest commit name: `feat(budget): add persistent context budget tracker and restart recovery ledger`.
+- [x] Step 6.1: Implement `ContextBudgetTracker` in `src/acc_mcp/budget.py` tracking pre-flight estimates and reconciling ground-truth token usage from harness responses.
+- [x] Step 6.2: Implement persistent session caching and ledger export to `context_budget.json`.
+- [x] Step 6.3: Implement repository symbol map caching to retain AST statistics across agent restarts without re-parsing files.
+- [x] Step 6.4: Write unit tests in `tests/test_budget.py` verifying budget calculations, JSON persistence, and restart state recovery.
+- [x] Step 6.5: Run test suite, verify budget ledger and restart behavior pass, and suggest commit name: `feat(budget): add persistent context budget tracker and restart recovery ledger`.
 
 ## Phase 7: Model Context Protocol (MCP) Server Integration (Block 2)
 *Feature: Stdio MCP server exposing adaptive context slicing and token audit ledger tools.*

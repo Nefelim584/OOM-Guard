@@ -1,5 +1,6 @@
 """Adaptive Context Compressor MCP (ACC-MCP)."""
 
+from acc_mcp.budget import ContextBudgetTracker, RetrievalRecord
 from acc_mcp.decision import (
     ContextFeatures,
     DecisionModel,
@@ -32,4 +33,6 @@ __all__ = [
     "DecisionResult",
     "DecisionEvaluator",
     "EvaluationMetrics",
+    "ContextBudgetTracker",
+    "RetrievalRecord",
 ]
