@@ -1,17 +1,15 @@
 # Adaptive Context Compressor MCP (ACC-MCP)
 **Course:** Coding for AI & Data Science — Final Project (2026–2027)  
-**Target Model:** Qwen3.5-4B (Quantized Q4_K_M GGUF via `llama-server`)  
+**Target Model:** Qwen3.5-4B (quantized GGUF via `llama-server`; file and quantization recorded per benchmark run)  
 **Selected Building Blocks:** Block 2, Block 3, Block 4, Block 5, Block 9  
 
 ---
 
 ## 1. Executive Summary & Motivation
 
-Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project uses 30,208 tokens, the per-slot window `llama-server` reports on the reference machine). When coding agents handle multi-file codebases, they often read entire files into that window. This creates two problems:
-1. **Context Bloat:** a full window leaves less room for the task, and an overfull request fails outright.
-2. **Token Waste:** many questions (verifying a function signature, finding call sites, checking return types) need only the interface, not the function bodies.
+Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project uses 30,208 tokens, the per-slot window `llama-server` reports on the reference machine). Inside a coding agent, the model finds code by **navigating**: it searches with `grep`/`find` and reads files in line windows, some of which miss the code it needs. Each search and each window is a tool call whose output stays in the conversation. In the pilot session (excluded from the results) the agent never read the ~45K-token file whole. It found the function with `grep` and read it in 6 windows of 10-100 lines, 2 of which missed the function.
 
-**Adaptive Context Compressor (ACC-MCP)** is a standalone Model Context Protocol (MCP) server that acts as an intelligent token-budget gatekeeper. Instead of returning raw source files, an embedded **Decision Model** predicts the minimum context fidelity needed for a specific task and serves a pruned AST (Abstract Syntax Tree) slice. A deterministic code layer enforces strict token ceilings and file security boundaries.
+**Adaptive Context Compressor (ACC-MCP)** is a standalone Model Context Protocol (MCP) server that gives the agent **symbol-level navigation**. `find_symbol` locates a definition, and `get_adaptive_context` serves exactly that symbol at the depth the task needs. An embedded **Decision Model** picks that depth (signatures, call graph, or verbatim body), and a deterministic code layer enforces token ceilings, a session budget and file security boundaries. Block 9 measures whether this makes finding and reading code cheaper than the agent's own `grep` + windowed `read` strategy, without lowering the success rate.
 
 ---
 
@@ -92,10 +90,16 @@ $$\text{Tier}(P) = \begin{cases}
 \text{Tier 3 (Full Body)}, & \text{if } P(\text{Full}) \ge \theta_{\text{high}}
 \end{cases}$$
 
-### 4.4 Token Savings Metric
-For each retrieval event, relative token reduction is computed against the raw full-file read:
+### 4.4 Measuring the Saving
+The ledger records what ACC-MCP served (tokens per tier and per tool, and the line ranges of every slice). It also compares each slice with the whole file it came from, but only as an **upper bound**:
 
-$$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{\text{Served Tier}}}{\text{Tokens}_{\text{Full File}}} \times 100\%$$
+$$\text{Upper-bound saving (\%)} = \frac{\text{Tokens}_{\text{Whole File}} - \text{Tokens}_{\text{Served}}}{\text{Tokens}_{\text{Whole File}}} \times 100\%$$
+
+This assumes the agent would otherwise read the whole file, which it did not do in the pilot session. The saving that is tested (H1 in `eval/PROTOCOL.md`) compares with what the agent really does, measured from Pi's session file in both modes with the same counter (characters / 3.8):
+
+$$\text{Code-reading tokens} = \sum_{c \,\in\, \text{code\_read}} \text{Tokens}_{\text{out}}(c) + \sum_{c \,\in\, \text{ACC-MCP}} \text{Tokens}_{\text{out}}(c)$$
+
+together with the number of navigation calls (code reading plus `find_symbol` / `get_adaptive_context`) before the first edit of the target function.
 
 ---
 
@@ -106,9 +110,9 @@ $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{
 * **Exposed Tools:**
   * `get_adaptive_context(file_path: str, task_intent: str, symbol_name: str | None, min_tier: int | None)`: Runs the decision model and returns the slice; `min_tier` lets the agent ask for a higher tier when a slice was not enough.
   * `find_symbol(name: str)`: Finds where a class, function, or method is defined in the workspace.
-  * `get_token_ledger()`: Returns token totals, `escalation_rate`, the session budget, and recent history.
+  * `get_token_ledger()`: Returns served tokens per tier and per tool, `escalation_rate`, the session budget, the whole-file upper bound, and recent history with line ranges.
   * `reset_session()`: Starts a fresh session token budget for a new task.
-* **Evidence:** Tool tests in `tests/test_server.py`; a real agent session trace comes from the Pi runs in Phase 14.
+* **Evidence:** Tool tests in `tests/test_server.py`; a real agent session trace will come from the acc runs of Block 9 (Phase 26).
 
 ### Block 3: A Rule Enforced in Code
 * **Implementation:** A deterministic safety guardrail implemented in Python before any code is read or served.
@@ -121,12 +125,13 @@ $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{
 * **Implementation:** A logistic model whose weights are fitted by gradient descent on a train split; the thresholds are hand-picked.
 * **Evaluation:** 100 labeled task intents (29 Tier 1, 31 Tier 2, 40 Tier 3), split 70/30 by tier. Results are reported separately for train and for the 30-task holdout the fit never saw.
 * **Metrics:** 3x3 tier confusion matrix, false alarm rate (served a higher tier than needed), and miss rate (served a lower tier than needed). The holdout numbers are in `README.md`.
+* **Online signal:** in the Block 9 acc runs, a miss shows up as an explicit escalation (the agent raises `min_tier`) or a silent one (after a Tier 1/2 slice the agent reads the same lines itself within 5 tool calls). The online miss rate (explicit + silent) / slices served will be reported next to the holdout numbers; it is not measured yet. Bug fixes mostly need Tier 3, so 4 of the 10 benchmark tasks are call-graph tasks, to exercise Tier 1 and Tier 2 at all.
 
 ### Block 5: Memory or Context Budget Management
 * **Implementation:** A per-session token budget plus a ledger that persists across server restarts.
 * **Mechanisms:**
-  * Caps the tokens served per session and steps down a tier when the chosen one does not fit.
-  * Persists the request history, totals, and the workspace symbol index to a local `context_budget.json` ledger.
+  * Caps the tokens served per session (20% of the window in the benchmark) and steps down a tier when the chosen one does not fit.
+  * Persists the request history (with the line ranges each slice showed), totals per tier and per tool, and the workspace symbol index to a local `context_budget.json` ledger. The whole-file comparison is kept only as an upper bound (section 4.4).
   * Restart test: after a restart the symbol index is rebuilt from the ledger and unchanged files are not parsed again (the file being served is still parsed for each request).
 
 ### Block 9: A Measured Comparison
@@ -146,7 +151,7 @@ $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{
 
 ## 6. Verification and Requirements (R1–R4)
 
-* **R1 (It Runs):** Runs inside the Pi coding agent against a local `llama-server` serving Qwen3.5-4B (`Q4_K_M` GGUF) on port 8080, with setup steps in `README.md` (pending Phase 14).
-* **R2 (Automated Tests):** `pytest` suite testing AST parsing, the call graph, decision model outputs, safety gates, the session budget, and the MCP tools.
+* **R1 (It Runs):** Runs inside the Pi coding agent against a local `llama-server` serving Qwen3.5-4B (GGUF) on port 8080, with setup steps in `README.md`. **Pending:** no recorded run in which Pi called ACC-MCP exists yet (Phase 26).
+* **R2 (Automated Tests):** `pytest` suite testing AST parsing, the call graph, decision model outputs, safety gates, the session budget, the MCP tools, and the benchmark's measurement code (navigation metrics, freeze, report).
 * **R3 (AI-Use Log):** Work session transcripts recorded in `ai_log/` with annotations on prompts refined and manual code corrections.
 * **R4 (Defence Readiness):** Clear, modular code layout with strict separation between AST parsing (`parser.py`), decision model inference (`decision.py`), guardrails (`guard.py`), budget and symbol index (`budget.py`, `index.py`), and MCP endpoints (`server.py`).

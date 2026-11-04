@@ -109,6 +109,46 @@ def stratified_split(
     return train, holdout
 
 
+def metrics_from_evaluations(evaluations: list[dict[str, Any]]) -> EvaluationMetrics:
+    """Confusion matrix, accuracy, miss and false alarm rates from per-task predictions.
+
+    Each evaluation needs `ground_truth_tier` and `predicted_tier`; it is kept as is in
+    `task_evaluations`. Shared by the Block 4 decision model and the Block 7 intent models.
+    """
+    tier_cm: dict[int, dict[int, int]] = {a: {p: 0 for p in TIERS} for a in TIERS}
+    for item in evaluations:
+        tier_cm[item["ground_truth_tier"]][item["predicted_tier"]] += 1
+
+    total = len(evaluations)
+    correct = sum(tier_cm[t][t] for t in TIERS)
+    misses = sum(tier_cm[a][p] for a in TIERS for p in TIERS if p < a)
+    false_alarms = sum(tier_cm[a][p] for a in TIERS for p in TIERS if p > a)
+    can_miss = sum(sum(tier_cm[a].values()) for a in TIERS if a > 1)
+    can_over_serve = sum(sum(tier_cm[a].values()) for a in TIERS if a < 3)
+
+    per_tier: dict[int, dict[str, float]] = {}
+    for t in TIERS:
+        support = sum(tier_cm[t].values())
+        predicted = sum(tier_cm[a][t] for a in TIERS)
+        per_tier[t] = {
+            "precision": _ratio(tier_cm[t][t], predicted),
+            "recall": _ratio(tier_cm[t][t], support),
+            "support": support,
+        }
+
+    return EvaluationMetrics(
+        total_samples=total,
+        accuracy=_ratio(correct, total),
+        misses=misses,
+        false_alarms=false_alarms,
+        miss_rate=_ratio(misses, can_miss),
+        false_alarm_rate=_ratio(false_alarms, can_over_serve),
+        per_tier=per_tier,
+        tier_confusion_matrix=tier_cm,
+        task_evaluations=evaluations,
+    )
+
+
 class DecisionEvaluator:
     """Fits and evaluates the DecisionModel against the ground-truth dataset."""
 
@@ -170,8 +210,6 @@ class DecisionEvaluator:
         """Run `model` (default: the evaluator's model) over tasks and compute metrics."""
         tasks = dataset if dataset is not None else self.load_dataset()
         model = model or self.model
-
-        tier_cm: dict[int, dict[int, int]] = {a: {p: 0 for p in TIERS} for a in TIERS}
         evaluations: list[dict[str, Any]] = []
 
         for task in tasks:
@@ -185,8 +223,6 @@ class DecisionEvaluator:
                 parser=parser,
                 symbol_name=task.get("target_symbol"),
             )
-
-            tier_cm[ground_truth_tier][decision.tier] += 1
 
             evaluations.append(
                 {
@@ -203,34 +239,7 @@ class DecisionEvaluator:
                 }
             )
 
-        total = len(tasks)
-        correct = sum(tier_cm[t][t] for t in TIERS)
-        misses = sum(tier_cm[a][p] for a in TIERS for p in TIERS if p < a)
-        false_alarms = sum(tier_cm[a][p] for a in TIERS for p in TIERS if p > a)
-        can_miss = sum(sum(tier_cm[a].values()) for a in TIERS if a > 1)
-        can_over_serve = sum(sum(tier_cm[a].values()) for a in TIERS if a < 3)
-
-        per_tier: dict[int, dict[str, float]] = {}
-        for t in TIERS:
-            support = sum(tier_cm[t].values())
-            predicted = sum(tier_cm[a][t] for a in TIERS)
-            per_tier[t] = {
-                "precision": _ratio(tier_cm[t][t], predicted),
-                "recall": _ratio(tier_cm[t][t], support),
-                "support": support,
-            }
-
-        return EvaluationMetrics(
-            total_samples=total,
-            accuracy=_ratio(correct, total),
-            misses=misses,
-            false_alarms=false_alarms,
-            miss_rate=_ratio(misses, can_miss),
-            false_alarm_rate=_ratio(false_alarms, can_over_serve),
-            per_tier=per_tier,
-            tier_confusion_matrix=tier_cm,
-            task_evaluations=evaluations,
-        )
+        return metrics_from_evaluations(evaluations)
 
     def calibrate(self, dataset: list[dict[str, Any]] | None = None) -> CalibrationResult:
         """Fit the weights on the train split and measure train and holdout separately.

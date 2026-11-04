@@ -2,7 +2,7 @@
 
 **Project:** Adaptive Context Compressor MCP (ACC-MCP / OOM-Guard)  
 **Course:** Coding for AI & Data Science — Final Project (2026–2027)  
-**Target Model:** Qwen3.5-4B (Quantized Q4_K_M GGUF via `llama-server`)  
+**Target Model:** Qwen3.5-4B (quantized GGUF via `llama-server`; file and quantization recorded per benchmark run)  
 **Building Blocks Implemented:** Block 2, Block 3, Block 4, Block 5, Block 9  
 **Requirements Addressed:** R1 (It Runs), R2 (Automated Tests), R3 (AI-Use Log), R4 (Defence Readiness)  
 
@@ -10,7 +10,7 @@
 
 ## 1. Overview and Chronology of AI Collaboration
 
-This document fulfills course requirement **R3 (AI-Use Log)** by recording work sessions, prompt refinements, design decisions, manual code corrections, and debugging interventions. The plan lives in `todo.md` (22 phases). Exported session transcripts are in this folder (`*.md`).
+This document fulfills course requirement **R3 (AI-Use Log)** by recording work sessions, prompt refinements, design decisions, manual code corrections, and debugging interventions. The plan lives in `todo.md` (27 phases). Exported session transcripts are in this folder (`*.md`).
 
 ### Phases 1–10: First build
 
@@ -36,7 +36,7 @@ After Phase 10 the project was reviewed and `todo.md` was extended with Phases 1
 | **Phase 11** | Intent depth comes from the verb | Classifier counts operation verbs, not subject nouns like "error" or "bug". | `8b1e2b3` |
 | **Phase 12** | Tier escalation | Added `min_tier` to `get_adaptive_context` and tier guidance in the tool description. | `550c1b6` |
 | **Phase 13** | Remove synthetic benchmark | Deleted `compare_context.py`, `benchmark/`, and the in-process harness, because the benchmark marked every gated run as a success and one generated file produced most of its saving. | `f00e381` |
-| **Phase 14** | Pi integration & manual evaluation | **Not done yet.** Planned: workspace root setting, per-run ledger, Pi setup, `eval/PROTOCOL.md`, `eval/results.md`. (`ACC_MCP_ROOT` itself was added in Phase 16.) | — |
+| **Phase 14** | Pi integration & manual evaluation | Partly done: per-run ledger (`ACC_MCP_LEDGER`), Pi setup through `eval/pi_bench.py`, `eval/PROTOCOL.md`, and one pilot session. The counted runs and `eval/results.md` were moved to Phase 26. (`ACC_MCP_ROOT` itself was added in Phase 16.) | — |
 | **Phase 15** | Edit-ready output | Tier 3 copied verbatim from the file, `# file lines a-b: symbol` headers, explicit "omitted lines" notes. | `be3b350` |
 | **Phase 16** | Path security | Only `.py` files inside the workspace root; resolved (symlink) paths checked. | `53bb6b4` |
 | **Phase 17** | Symbol index | Workspace index with SHA-256 hash-checked cache and the `find_symbol` tool. | `b5b36e2` |
@@ -44,7 +44,19 @@ After Phase 10 the project was reviewed and `todo.md` was extended with Phases 1
 | **Phase 19** | Session budget | Budget drives tier selection (step down, refuse forced tiers that do not fit), `reset_session`, one ledger save per request, history cap. | `17b713b` |
 | **Phase 20** | Decision model quick fixes | 3x3 confusion matrix, exact word-form keywords, `escalation_rate` in the ledger, README states the weights were hand-picked. | `048dcbf` |
 | **Phase 21** | Honest calibration | 100-task dataset, stratified 70/30 split, weights fitted by gradient descent, train and holdout reported separately. See Refinement 4. | `41b6c93` |
-| **Phase 22** | Documentation cleanup | README, `Description.md`, and this log aligned with the code; unsupported claims removed; `LICENSE` added. See Refinement 5. | pending |
+| **Phase 22** | Documentation cleanup | README, `Description.md`, and this log aligned with the code; unsupported claims removed; `LICENSE` added. See Refinement 5. | `f5f0c02` (with 23-24) |
+
+### Phases 23–27: Measuring against what the agent really does
+
+These phases were planned after the first Pi session (the pilot, plain mode, task `mi_difference`). It showed that the agent does not read whole files: it greps and reads small line windows. The plan changed from "saving against whole files" to "navigation cost against the agent's own strategy". The work was done with Claude Code in this repository; the human ran every command that executes code (tests, the benchmark helper) and made the commits.
+
+| Phase | Core Objective | What Was Done | Commit |
+| :--- | :--- | :--- | :--- |
+| **Phase 23** | Honest ledger accounting (Block 5) | Whole-file comparison renamed to an upper bound (`whole_file_tokens`, `upper_bound_savings_pct`); old ledgers still load; served line ranges stored per request; served tokens per tier and per tool (`find_symbol` output now counted). See Refinement 6, Correction 5. | `f5f0c02` |
+| **Phase 24** | Navigation metrics from Pi sessions (Block 9) | `pi_bench.py collect` classifies every tool call (code reading, tests, edits, ACC-MCP, other) and counts output tokens with one counter; navigation calls before the first edit of the target function, wasted and large reads; silent escalations and the online miss rate. Tests use a trimmed copy of the pilot session, checked by hand. | `f5f0c02` |
+| **Phase 25** | Protocol fixes | Click baseline fixed (Correction 6); new hypotheses H1-H3 in `eval/PROTOCOL.md`; one context window (30,208) everywhere with the session budget at 20% of it; 4 of the 10 tasks turned into call-graph tasks and all reports made easier (Refinement 7). | `3bcc93c` |
+| **Phase 26** | Benchmark runs and results | Tooling done: `freeze` records the setup and blocks runs that no longer match it; `report` gives summaries per mode and task kind, ACC-MCP use and the online miss rate, and a paired per-task table. **The counted runs have not been done yet.** | `d52cf62` |
+| **Phase 27** | Documentation for the new framing | README and `Description.md` now describe ACC-MCP as symbol-level navigation measured against `grep` + windowed `read`; whole-file saving only as an upper bound; the online miss rate described next to the holdout result. Numbers that need the Phase 26 runs are marked as not measured. | pending |
 
 ---
 
@@ -90,6 +102,16 @@ After Phase 10 the project was reviewed and `todo.md` was extended with Phases 1
 - **Human choice:** The README named Qwen3.5-4B while the commands used Qwen2.5-Coder-3B. The human confirmed Qwen3.5-4B is the model actually used (already downloaded locally), and asked the AI not to download or run the model itself but to give commands instead.
 - **Removed or corrected claims:** tier token footprints (Tier 3 "1,000–3,000 tokens" contradicted the 2,000-token ceiling), "more than 70% of queries need only interfaces" and "60–85% fewer prompt tokens" (no measurement behind them), the Cerebras fallback (no code), `alembic/migrations/` as a protected path (no longer in `guard.py`), and `file:///Users/...` links (do not work on GitHub).
 
+### Refinement 6: Measure Against What the Agent Really Does (Phases 23–25)
+- **Observation:** In the pilot session the agent located `difference` with `find | xargs grep` and `grep -n` and read it in 6 windows of 10-100 lines, 2 of which missed it; it never loaded the ~45K-token `more.py`. 48 of its 65 tool calls were its own Python experiments.
+- **Consequence:** The ledger's "saving against the whole file" compared ACC-MCP with something the agent never does. It is now reported only as an upper bound. The hypotheses became H1 (navigation calls and code-reading tokens against the agent's own `grep` + `read`), H2 (success not lower) and H3 (peak context, which may not change because most of the pilot's context came from the agent's experiments).
+- **Design choices made by the AI and reported to the human:** `find_symbol` output is counted per tool but not against the session budget; bash `find`/`ls` and Pi's own `grep`/`find`/`ls` tools count as code reading; a read of any other file counts as wasted; a ledger without line ranges gives "unknown" silent escalations, not 0.
+
+### Refinement 7: Easier Tasks That Exercise the Call Graph (Phase 25)
+- **Question put to the human:** All 10 tasks were bug fixes, where the decision model almost always picks Tier 3. The plan offered to add 2-3 caller-navigation tasks (for example, change a function's signature and update every call site).
+- **Human choice:** *"Not add but change some of them to the caller-navigating tasks. Also make them a bit easier, cause it tests 4b model even in q6 struggled to solve them."* The human also chose 30,208 as the one context window (the real `/props` value) over the 8,192 in the old documents.
+- **Result:** 4 `call_graph` tasks, where the report names an entry function and the bug is in a helper it calls (never named in the report). `mi_difference`, where the pilot model got lost in `tee` logic, was replaced by `mi_sliding_window` (bug in `_sliding_window_deque`); the `--help` alignment bug moved from `write_dl` into its helper `measure_table`; the two other click call-graph tasks kept their bug but got reports that name the entry function. Every click report now names its module. A test checks that no call-graph report names the buggy helper.
+
 ---
 
 ## 3. Manual Code Corrections & Debugging Annotations
@@ -117,6 +139,14 @@ After Phase 10 the project was reviewed and `todo.md` was extended with Phases 1
 - **Issue:** After the weights were fitted, the human ran the suite and reported one failure: `tests/test_callgraph.py::test_tier2_separates_resolved_and_possible_callers` (216 passed, 1 failed). The test checks the Tier 2 caller listing, but with the fitted weights "Trace callers of Invoice.total" gets $P \approx 0.68 > 0.65$, so the server served Tier 3. The AI had pinned a similar test in `test_server.py` but missed this file.
 - **Correction:** Added a `policy_server_model` fixture in `tests/conftest.py` that builds the server with fixed weights, and used it in the three tests that check what a Tier 2 slice contains. Tests of the fit itself use the real defaults.
 
+### Correction 5: Ledger Version Pinned by an Old Test (Phase 23)
+- **Issue:** The human's run after Phases 23-24 reported 251 passed, 1 failed: `test_ledger_json_persistence` still expected ledger version `"1.0"`, but the new ledger format is written as `"1.1"`.
+- **Correction:** The version bump was intended, so the test was updated, not the code. The AI also noted that in this session it had first edited files with shell commands, against the repository's rule that the AI only reads with the shell; it switched to the editor tools for the remaining edits.
+
+### Correction 6: Click Baseline With 0 Passing Tests (Phase 25)
+- **Issue:** `validate` stored a click baseline with 0 passed tests and one failure, `tests.test_deprecations`, so the "no new failures" check was empty for all 5 click tasks. Cause found by reading the code: `tests/test_deprecations.py` calls `importlib.metadata.version("click")` while pytest collects it; click is imported through `PYTHONPATH=src` and not installed, so the call raises and pytest aborts the whole run.
+- **Correction:** `setup` writes a metadata-only `click-8.5.0.dist-info` (name and version, no code) into the test venv, so the code still comes only from the workspace. `validate` now fails when a clean suite passes 0 tests, and `freeze` refuses such a baseline. **Not yet confirmed:** `setup` and `validate` have to be run again.
+
 ---
 
 ## 4. Verification Sign-Off
@@ -124,7 +154,10 @@ After Phase 10 the project was reviewed and `todo.md` was extended with Phases 1
 ### Phase 10 sign-off (superseded)
 The Phase 10 sign-off reported 110 passing tests, "full coverage", and a 30-run comparative benchmark. Coverage was never measured, and the benchmark was removed in Phase 13 because it did not check the model's answers.
 
-### Current status (Phase 22)
-- **Test Suite:** 217 tests in 10 test files. The last run reported by the human was 216 passed, 1 failed (Correction 4); the fix has to be confirmed by the next full run.
-- **Decision Model:** holdout accuracy 70.0%, miss rate 14.3%, false alarm rate 33.3% on 30 unseen tasks (see `README.md`).
-- **Block 9 / R1:** not done yet; they need the Phase 14 Pi runs.
+### Status at Phase 22 (superseded)
+217 tests; holdout accuracy 70.0%; Block 9 and R1 not done.
+
+### Current status (Phase 27)
+- **Test Suite:** 268 tests in 11 test files. The last full run reported by the human (after Phase 24) was 252 passed; the 16 tests added in Phases 25-26 still need a full run.
+- **Decision Model:** holdout accuracy 70.0%, miss rate 14.3%, false alarm rate 33.3% on 30 unseen tasks (see `README.md`). The online miss rate is not measured yet.
+- **Block 9 / R1:** tooling, protocol and tasks are ready; the counted Pi runs (Phase 26) have not been done, so no result is claimed. Before them: re-run `setup` and `validate` (click baseline), commit, then `freeze`.

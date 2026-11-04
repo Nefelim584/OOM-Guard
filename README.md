@@ -1,13 +1,13 @@
 # Adaptive Context Compressor MCP (ACC-MCP / OOM-Guard)
 
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://python.org)
-[![Tests: 219](https://img.shields.io/badge/Tests-219-brightgreen.svg)](tests)
+[![Tests: 268](https://img.shields.io/badge/Tests-268-brightgreen.svg)](tests)
 [![MCP SDK: 1.x / 2.x](https://img.shields.io/badge/MCP%20SDK-1.x%20%2F%202.x-purple.svg)](https://modelcontextprotocol.io)
 [![Target Model: Qwen3.5-4B](https://img.shields.io/badge/Target%20Model-Qwen3.5--4B-orange.svg)](https://huggingface.co/Qwen)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 > **Course:** Coding for AI & Data Science — Final Project (2026–2027)  
-> **Target Model:** Qwen3.5-4B (`Q4_K_M` GGUF, served locally by `llama-server`)  
+> **Target Model:** Qwen3.5-4B (GGUF, served locally by `llama-server`; the exact file and quantization of the benchmark runs are recorded by `pi_bench.py freeze`)  
 > **Course Building Blocks:** **Block 2**, **Block 3**, **Block 4**, **Block 5**, **Block 9**  
 > **Requirements Addressed:** **R1** (It Runs), **R2** (Automated Tests), **R3** (AI-Use Log), **R4** (Defence Readiness)  
 
@@ -15,11 +15,13 @@
 
 ## 1. Executive Summary & Problem Formulation
 
-Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project uses 30,208 tokens, the per-slot window `llama-server` reports on the reference machine). A coding agent that reads whole source files into that window fills it quickly:
-1. **Context bloat:** a full window leaves less room for the task, and an overfull request fails outright.
-2. **Token waste:** many questions (checking a signature, a type hint, or who calls a function) need only the interface, not the function bodies.
+Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project uses 30,208 tokens, the per-slot window `llama-server` reports on the reference machine). Inside a coding agent, the model does not usually read whole files into that window. It **navigates**: it searches with `grep`/`find`, then reads the file in line windows (`read` with `offset`/`limit`), and some of those windows land in the wrong place. Every search and every window is another tool call whose output stays in the conversation.
 
-**Adaptive Context Compressor (ACC-MCP)** is a Model Context Protocol (MCP) server that sits between the agent and the code. Instead of returning raw files, a **Decision Model** picks how much of a symbol to show (signatures, call graph, or full body) and serves that slice of the file. Rules written in code enforce a token ceiling, a per-session token budget, and which files may be read at all.
+This is what the pilot session showed (plain Pi, a bug in more-itertools' `difference`, inside a 5,644-line file of about 45K tokens; the session is not part of the results). The agent never read the whole file. It found the function with `find | xargs grep` and `grep -n`, then read it in 6 windows of 10-100 lines, 2 of which missed the function. Code reading was 10 of its 65 tool calls; 48 were its own Python experiments.
+
+**Adaptive Context Compressor (ACC-MCP)** is a Model Context Protocol (MCP) server that gives the agent **symbol-level navigation** instead. `find_symbol` says where a class, function or method is defined, and `get_adaptive_context` returns exactly that symbol at the depth the task needs: signatures (Tier 1), signatures plus callers and callees (Tier 2), or the verbatim body with its real line numbers (Tier 3). A **Decision Model** picks the tier from the task intent. Rules written in code enforce a token ceiling, a per-session token budget, and which files may be read at all.
+
+Whether this makes a small model **cheaper at finding and reading code without making it worse at fixing bugs** is what Block 9 measures, against the agent's own `grep` + windowed `read` strategy (hypotheses H1-H3 in [`eval/PROTOCOL.md`](eval/PROTOCOL.md)). Whole-file reading is not assumed; the benchmark counts it (large reads).
 
 ---
 
@@ -103,9 +105,9 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
 - **Exposed Tools:**
   1. `get_adaptive_context(file_path, task_intent, symbol_name=None, min_tier=None)`: checks the path, runs the decision model, and returns the slice. `min_tier` (1–3) lets the agent ask for more context when a slice was not enough; it can raise the model's tier but never lower it. Each request is recorded in the ledger.
   2. `find_symbol(name)`: finds where a class, function, or method is defined anywhere in the workspace and returns file path (relative to the workspace root), qualified name, kind, and line range as JSON (at most 50 matches).
-  3. `get_token_ledger()`: returns all-time totals, `escalation_rate`, the current session budget, and the recent request history as JSON.
+  3. `get_token_ledger()`: returns served tokens per tier and per tool, `escalation_rate`, the current session budget, the whole-file comparison as an upper bound, and the recent request history (with the line ranges each slice showed) as JSON.
   4. `reset_session()`: starts a fresh session token budget; all-time totals and history are kept.
-- **Evidence:** In-process tool tests in [`tests/test_server.py`](tests/test_server.py) (discovery, each tool, errors, `min_tier`, budget, ledger persistence across restarts). No test yet starts the server as a subprocess or drives it from a real agent; that is planned in Phase 14.
+- **Evidence:** In-process tool tests in [`tests/test_server.py`](tests/test_server.py) (discovery, each tool, errors, `min_tier`, budget, ledger persistence across restarts). No test yet starts the server as a subprocess or drives it from a real agent; the recorded Pi runs of Block 9 (Phase 26) will be that evidence.
 
 ### Block 3: A Rule Enforced in Code (`src/acc_mcp/guard.py`)
 - **Implementation:** Deterministic checks in Python that run before any code is read or served.
@@ -142,25 +144,91 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
   | Old hand-picked weights, same holdout | 66.7% | 28.6% (6) | 22.2% (4) |
 
   Holdout 3x3 confusion matrix (rows = actual tier, columns = predicted tier 1/2/3): Tier 1 `8 0 1`, Tier 2 `1 3 5`, Tier 3 `1 1 10`. Tier 2 recall is only 33%: most Tier 2 tasks get Tier 3.
+
+  **Read these with Block 8:** the 95% interval of the 70.0% holdout accuracy is 52.1–83.3%. The difference from the hand-picked weights is not significant (McNemar p = 1.0). Over 50 random splits the fitted model averages 63.7%, so seed 21 is a favourable draw.
 - **What the fit shows:**
   - The tier is still decided almost entirely by $x_1$. With the fitted weights, on the dataset $x_1 = 0$ gives $P \approx 0.1$–$0.22$ (Tier 1), $x_1 = 2$ gives $P \ge 0.9$ (Tier 3), and $x_1 = 1$ gives $P \approx 0.55$–$0.72$, which sits right on $\theta_{\text{high}}$.
   - $x_2$ (complexity) and $x_4$ (annotations) get weights near zero. Setting either to 0 changes at most 3 train and 2 holdout tiers, because many $x_1 = 1$ tasks sit so close to $\theta_{\text{high}}$ that a tiny shift moves them.
   - $x_3$ (in-degree) gets a **negative** weight. For $x_1 = 1$ it decides between Tier 2 (the symbol has callers) and Tier 3 (it has none), and changes 10 train and 4 holdout tiers. This comes from the data, not from a design idea; with this dataset, more callers does not mean more context is needed.
   - Most errors come from the keyword classifier, not the weights. Intents with no keyword fall back to $x_1 = 1$. Caller questions phrased with inspection words ("Find every function that calls…") get $x_1 = 0$. Body edits phrased with Tier 2 verbs ("Add retry logic inside…") get $x_1 = 1$.
-- **Limits of this measurement:** the labels and intents were written by the project author, not collected from users. Train and holdout tasks can share a code snippet, so $x_2$–$x_4$ values are not fully unseen. Only 2 intents are real (from the server ledger); real Pi intents will be added once the Phase 14 runs exist.
-- The real-world signal is `escalation_rate` in `get_token_ledger`: the share of requests where the agent had to raise `min_tier` above the model's choice because the slice it got was not enough.
+- **Limits of this measurement:** the labels and intents were written by the project author, not collected from users. Train and holdout tasks can share a code snippet, so $x_2$–$x_4$ values are not fully unseen. Only 2 intents are real (from the server ledger); the `task_intent` strings the model sends in the Block 9 acc runs will be added once those runs exist.
+- **Online signal (Block 9):** in real use a miss shows up in two ways. An **explicit escalation** is the agent calling again with a `min_tier` above the model's tier (`escalation_rate` in `get_token_ledger`). A **silent escalation** is the agent getting a Tier 1 or Tier 2 slice and then reading some of the same lines itself with `read`/`sed` within the next 5 tool calls. The **online miss rate** is (explicit + silent) / slices served, reported in `eval/results.md` next to the offline holdout numbers above. **Not measured yet:** it needs the counted Pi runs.
+- **Which tiers the benchmark exercises:** bug fixes need the body, so the decision model mostly picks Tier 3 for them. In 6 of the 10 benchmark tasks the report points at the function to fix. The other 4 are call-graph tasks, where the report names a function whose helper has the bug, so that Tier 1 and Tier 2 (signatures, callers, callees) are used at all.
 
 ### Block 5: Memory or Context Budget Management (`src/acc_mcp/budget.py`, `src/acc_mcp/index.py`)
 - **Session Budget:** All slices in a session share a token budget (`ACC_MCP_SESSION_BUDGET`, default 6,000 tokens, about 20% of the 30,208-token window; the benchmark sets exactly 20%, 6,042). Each slice is cut to $\min(C_{\max}, \text{tokens left})$. If the chosen tier does not fit, the server serves one tier lower and says so in a `# [ACC-MCP] Served Tier n instead of Tier m` note; a tier forced with `min_tier` that does not fit is refused with a `# [ACC-MCP] Not served` message. `reset_session` starts a new budget.
-- **Ledger:** Every request is recorded with its served tier, model tier, `min_tier`, and token counts. Savings per request are measured against reading the whole file:
-  $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{\text{Served Tier}}}{\text{Tokens}_{\text{Full File}}} \times 100\%$$
-  The ledger is saved once per request to the file named by `ACC_MCP_LEDGER`, or to `context_budget.json` in the server's working directory. Totals cover all requests; the history keeps only the last 200 records.
+- **Ledger:** Every request is recorded with its served tier, model tier, `min_tier`, served tokens, and the line ranges it showed (file, symbol, first and last line; for a slice cut by the ceiling, only the lines really shown). The summary reports what the server really knows: served tokens per tier and per tool (`get_adaptive_context`, `find_symbol`). The comparison with the whole file is kept only as a labelled **upper bound** (`whole_file_tokens`, `upper_bound_savings_pct`):
+  $$\text{Upper-bound saving (\%)} = \frac{\text{Tokens}_{\text{Whole File}} - \text{Tokens}_{\text{Served}}}{\text{Tokens}_{\text{Whole File}}} \times 100\%$$
+  It is an upper bound because it assumes the agent would otherwise read the whole file, which it did not do in the pilot session. The saving that Block 9 tests is against the agent's own `grep` + windowed `read` strategy. Ledgers written before this change (`baseline_tokens`, `savings_percentage`) still load. The ledger is saved once per request to the file named by `ACC_MCP_LEDGER`, or to `context_budget.json` in the server's working directory. Totals cover all requests; the history keeps only the last 200 records.
 - **Workspace Symbol Index (`index.py`):** Walks every servable `.py` file under the workspace root (skipping `.venv`, `venv`, `.git`, `__pycache__`, `node_modules`) and stores each file's symbol map (names, line ranges, complexities, callers, callees, raised exceptions) in the ledger. Each file's SHA-256 is compared with the cached `file_hash`: unchanged files are reused, changed files are re-parsed, deleted files are dropped.
 - **Cold Restart Test:** After a restart, the index is rebuilt from the ledger and unchanged files are not parsed again (the tests count parser calls). The file served by `get_adaptive_context` is still parsed on each request, because slices are cut from its AST.
 - **Evidence:** [`tests/test_budget.py`](tests/test_budget.py), [`tests/test_index.py`](tests/test_index.py), and the budget tests in [`tests/test_server.py`](tests/test_server.py).
 
+### Block 7: A Learned Model Compared with Baselines (`src/acc_mcp/intent_model.py`)
+- **Question:** Block 4 found that most decision errors come from the keyword rule that turns `task_intent` into $x_1$, not from the weights. Can a model **learned from the intent's words** do better?
+- **Model:** multinomial Naive Bayes over the lowercased words of `task_intent` (`snake_case` names split into words), Laplace smoothing ($\alpha = 1$), log-probabilities, no new dependencies. Words never seen in training are ignored, and ties go to the higher tier. It is a separate artifact from the Block 4 logistic model, evaluated offline only and **not used by the server**.
+- **Setup:** the same split as Block 4 (70 train / 30 holdout tasks, stratified, seed 21). Baselines on the same 30 tasks: always the most common train tier (Tier 3), and the current keyword rule read directly as a tier (depth 0/1/2 → Tier 1/2/3). Run `python3 src/acc_mcp/intent_model.py`.
+- **Holdout results (30 tasks):**
+
+  | Model | Accuracy | Miss rate | False alarm rate |
+  | :--- | :---: | :---: | :---: |
+  | Naive Bayes (words of `task_intent`) | 46.7% | 47.6% (10) | 33.3% (6) |
+  | Keyword rule (depth + 1) | **70.0%** | 38.1% (8) | **5.6%** (1) |
+  | Most common train tier (Tier 3) | 40.0% | 0.0% (0) | 100.0% (18) |
+
+  Naive Bayes holdout confusion matrix (rows = actual tier, columns = predicted 1/2/3): Tier 1 `5 3 1`, Tier 2 `4 3 2`, Tier 3 `3 3 6`. The keyword rule's: Tier 1 `8 1 0`, Tier 2 `1 8 0`, Tier 3 `1 6 5`.
+- **It overfits:** 98.6% on its own 70 train tasks against 46.7% on the holdout. With 70 short intents, most words occur in only one or two of them.
+- **What it learned:** the most likely words of every tier are shared ones ("the", "does", "of", "and"). The most distinctive words are: Tier 1 `arguments`, `take`, `type`, `inspect`; Tier 2 `update`, `callers`, `rename`, `calls`, `sites`; Tier 3 `loop`, `fix`, `logic`, `implement`. These are close to the keyword lists, plus topic words like `loop` or `config` that only happen to occur in one tier.
+- **Result:** Naive Bayes does **not** beat the keyword rule. On this split it is 23.3 points lower, and averaged over 50 splits it is 59.4% against 69.2% (Block 8). Of its 16 holdout errors, the keyword rule got 9 right. The keyword rule stays in the server; a learned intent model would need many more, and real, intents.
+- **Evidence:** [`tests/test_intent_model.py`](tests/test_intent_model.py): smoothing checked by hand on a 6-intent set, fitting only on train intents, all models scored on the same holdout ids, metrics consistent with the confusion matrix, reproducible report.
+
+### Block 8: Uncertainty on the Holdout (`src/acc_mcp/uncertainty.py`)
+- **Why:** Blocks 4 and 7 quote one split with 30 holdout tasks, so a single accuracy cannot stand on its own.
+- **Methods (no new dependencies):** Wilson 95% intervals; percentile bootstrap 95% intervals (2,000 resamples of the 30 holdout tasks, seed 8); paired comparisons on the same tasks, using the exact McNemar test (binomial on the discordant tasks) and a paired bootstrap interval for the accuracy difference; and split sensitivity, where the stratified split and both fits are repeated for 50 seeds. Run `python3 src/acc_mcp/uncertainty.py` (about a minute, for the 50 weight fits).
+- **Holdout intervals (seed-21 split, Wilson 95%):**
+
+  | Model | Accuracy | Miss rate | False alarm rate |
+  | :--- | :---: | :---: | :---: |
+  | Logistic, fitted weights (Block 4) | 70.0% (52.1–83.3%) | 14.3% (5.0–34.6%) | 33.3% (16.3–56.3%) |
+  | Logistic, hand-picked weights | 66.7% (48.8–80.8%) | 28.6% (13.8–50.0%) | 22.2% (9.0–45.2%) |
+  | Naive Bayes (Block 7) | 46.7% (30.2–63.9%) | 47.6% (28.3–67.6%) | 33.3% (16.3–56.3%) |
+  | Keyword rule | 70.0% (52.1–83.3%) | 38.1% (20.8–59.1%) | 5.6% (1.0–25.8%) |
+  | Most common train tier | 40.0% (24.6–57.7%) | 0.0% (0.0–15.5%) | 100.0% (82.4–100.0%) |
+
+  The bootstrap intervals are similar (fitted weights' accuracy 53.3–86.7%). Every accuracy interval is about 30 points wide.
+- **Paired comparisons (same 30 tasks):**
+
+  | Comparison | A − B | Paired bootstrap 95% | Only A right / only B right | Exact McNemar p |
+  | :--- | :---: | :---: | :---: | :---: |
+  | Fitted vs hand-picked weights (Block 4) | +3.3 pp | −20.0 to +26.7 pp | 7 / 6 | 1.000 |
+  | Naive Bayes vs keyword rule (Block 7) | −23.3 pp | −43.3 to −3.3 pp | 2 / 9 | 0.065 |
+
+- **Split sensitivity (holdout accuracy over 50 stratified splits):**
+
+  | Model | Mean | SD | Min | Max | Seed 21 |
+  | :--- | :---: | :---: | :---: | :---: | :---: |
+  | Logistic decision model (refitted per split) | 63.7% | 5.9 pp | 53.3% | 76.7% | 70.0% |
+  | Naive Bayes (refitted per split) | 59.4% | 9.4 pp | 30.0% | 73.3% | 46.7% |
+  | Keyword rule (no fitting) | 69.2% | 6.1 pp | 56.7% | 80.0% | 70.0% |
+
+- **What this shows:**
+  - **Fitting the Block 4 weights did not measurably improve accuracy.** The two weight sets disagree on 13 holdout tasks, split 7 to 6 (p = 1.0). The fit traded misses (6 → 3) for false alarms (4 → 6).
+  - **The seed-21 split is a favourable draw for the logistic model:** 70.0% there, against a mean of 63.7% over 50 splits. Over those splits, the keyword rule read directly as a tier (69.2%) is on average more accurate than the logistic model built on top of it (63.7%).
+  - **Naive Bayes vs keyword rule:** the paired bootstrap interval excludes 0, but the exact McNemar test does not reach 0.05 (p = 0.065, 2 vs 9 discordant tasks). This is weak evidence that the keyword rule is better on this split. The 50-split means point the same way (59.4% vs 69.2%), and seed 21 was one of Naive Bayes' worse splits.
+- **What the data cannot conclude:** there are 30 holdout tasks, the labels were written by the project author, and train and holdout tasks share code snippets. These numbers describe the models on this dataset only. A difference whose paired interval includes 0, or whose McNemar p is above 0.05, is not evidence that one model is better.
+- **Evidence:** [`tests/test_uncertainty.py`](tests/test_uncertainty.py):
+  - Wilson intervals against known values;
+  - a fixed bootstrap seed gives the same interval, and the interval contains the estimate;
+  - McNemar gives p = 1 for identical predictions and matches hand-counted cases;
+  - the seed sweep never fits on its own holdout;
+  - the seed-21 row reproduces the Block 4 and Block 7 numbers.
+
 ### Block 9: A Measured Comparison (Manual Evaluation with Pi)
-- **Question:** does ACC-MCP change whether a small local model fixes a bug in real code, and how much context it uses, when the model works inside a real coding agent (Pi)? The full method is in [`eval/PROTOCOL.md`](eval/PROTOCOL.md).
+- **Question:** does ACC-MCP make it cheaper for a small local model to find and read the code it needs, without making it worse at fixing the bug, when the model works inside a real coding agent (Pi)? The full method is in [`eval/PROTOCOL.md`](eval/PROTOCOL.md).
+- **Hypotheses:**
+  - **H1 (navigation cost):** fewer navigation calls before the first edit of the target function, and fewer code-reading tokens, than the agent's own `grep` + windowed `read` strategy.
+  - **H2 (success):** at least as many tasks resolved.
+  - **H3 (peak context):** a smaller largest prompt per model call. This may not change: in the pilot, most tool calls were the agent's own Python experiments, which ACC-MCP does not touch.
 - **Why our own benchmark:** SWE-bench's grader needs a Docker image of several GB per task; Exercism-style exercises are single small files where ACC-MCP has nothing to save; HumanEval/MBPP have no repository at all. The benchmark instead injects bugs into real libraries (the SWE-smith approach) and grades them with the libraries' own tests, without Docker.
 - **Repositories:**
 
@@ -174,8 +242,8 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
 - **Conditions:** every task is done twice with the same model, prompt, tools, compaction settings, operator rules and time limit. Only the acc run adds the ACC-MCP server (tools declared directly) and one sentence telling the model to prefer it for reading code.
 - **Grading:** after restoring the original tests, a task is resolved when the target tests pass and the full suite has no failures beyond those of the clean repo.
 - **Measured per run:** resolved or not; navigation calls before the first edit of the target function, code-reading tokens, wasted reads and large reads (the agent's own `grep` + windowed `read` strategy is the baseline, not reading whole files); peak context of one model call, total prompt tokens, model calls, tools used, compactions, wall time; and (with ACC-MCP) tiers served, explicit and silent escalations, and budget step-downs.
-- **Helper script:** [`eval/pi_bench.py`](eval/pi_bench.py) (`setup`, `validate`, `doctor`, `prepare`, `collect`, `list`, `report`). It never drives Pi itself.
-- **Status: not run yet.** Results will go to `eval/results.md`; until then this README makes no claim about token savings or task success.
+- **Helper script:** [`eval/pi_bench.py`](eval/pi_bench.py) (`setup`, `validate`, `doctor`, `freeze`, `prepare`, `collect`, `list`, `report`). It never drives Pi itself. `freeze` records the commit, model file, quantization, `llama-server` build, Pi version, window and budget before the counted runs, and `report` prints them with the results.
+- **Status: not run yet.** No counted run exists; the only session so far is the pilot, which is excluded. Results will go to `eval/results.md`, and until then this README makes no claim about navigation cost, token savings or task success.
 - An earlier simulated benchmark was removed: it marked every gated run as a success without checking the model's answer, and one generated file produced most of its reported saving.
 
 ---
@@ -184,8 +252,8 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
 
 | Requirement | Description | Status | Evidence |
 | :--- | :--- | :---: | :--- |
-| **R1 (It Runs)** | Runs inside a real agent (Pi) against a local `llama-server` with Qwen3.5-4B. | **PENDING** | The stdio server starts with `python -m acc_mcp.server`; the Pi setup and a real run are Phase 14. |
-| **R2 (Automated Tests)** | `pytest` suite for parser, call graph, guard, decision model, budget, index, and server. | **VERIFIED** | 219 tests in 10 test files (`uv run pytest`). |
+| **R1 (It Runs)** | Runs inside a real agent (Pi) against a local `llama-server` with Qwen3.5-4B. | **PENDING** | The stdio server starts with `python -m acc_mcp.server`, and `eval/pi_bench.py` writes the Pi configuration that starts it. The only recorded Pi session is the plain-mode pilot, so there is no recorded run in which Pi called ACC-MCP yet; that is the acc half of the Block 9 runs (Phase 26). |
+| **R2 (Automated Tests)** | `pytest` suite for parser, call graph, guard, decision model, budget, index, server, and the benchmark's measurement code. | **VERIFIED** | 268 tests in 11 test files (`uv run pytest`). The last full run reported here had 252 passing, after Phase 24; Phases 25-26 added 16 tests. |
 | **R3 (AI-Use Log)** | Work session transcripts recorded in `ai_log/` with prompt refinements and code fixes. | **VERIFIED** | [`ai_log/AI_USE_LOG.md`](ai_log/AI_USE_LOG.md) and the session transcripts in [`ai_log/`](ai_log). |
 | **R4 (Defence Readiness)** | Modular code with one job per file. | **VERIFIED** | `parser.py`, `guard.py`, `decision.py`, `evaluate_decision.py`, `budget.py`, `index.py`, `tokens.py`, `server.py`. |
 
@@ -260,7 +328,7 @@ Any MCP client (Claude Desktop, Cursor, or Pi through its MCP adapter extension)
       "args": ["run", "--directory", "/path/to/OOM-Guard", "python", "-m", "acc_mcp.server"],
       "env": {
         "ACC_MCP_ROOT": "/path/to/the/project/the/agent/works/on",
-        "ACC_MCP_SESSION_BUDGET": "6000"
+        "ACC_MCP_SESSION_BUDGET": "6042"
       }
     }
   }
@@ -283,6 +351,8 @@ OOM-Guard/
 │       ├── guard.py              # Block 3: Workspace/path rules & token ceiling
 │       ├── decision.py           # Block 4: Intent classifier, logistic scoring, weight fitting
 │       ├── evaluate_decision.py  # Block 4: Train/holdout split, weight fit, and report
+│       ├── intent_model.py       # Block 7: Naive Bayes intent classifier vs baselines (offline)
+│       ├── uncertainty.py        # Block 8: Wilson/bootstrap intervals, McNemar, split sensitivity
 │       ├── budget.py             # Block 5: Session budget, token ledger & symbol cache
 │       ├── index.py              # Block 5: Workspace symbol index (hash-checked cache)
 │       └── server.py             # Block 2: Stdio MCP server and its four tools
@@ -297,13 +367,18 @@ OOM-Guard/
 │   ├── test_guard.py             # Block 3 path rules & ceiling tests
 │   ├── test_decision.py          # Block 4 classifier, scoring, fitting & tier policy tests
 │   ├── test_decision_eval.py     # Block 4 dataset, split, fit, and train/holdout metrics tests
+│   ├── test_intent_model.py      # Block 7 Naive Bayes, baselines, same-holdout checks
+│   ├── test_uncertainty.py       # Block 8 intervals, McNemar, paired bootstrap, seed sweep
 │   ├── test_budget.py            # Block 5 ledger, session budget & restart tests
 │   ├── test_index.py             # Block 5 symbol index, cache reuse & find_symbol tests
-│   └── test_server.py            # Block 2 MCP tool tests
+│   ├── test_server.py            # Block 2 MCP tool tests
+│   ├── test_pi_bench.py          # Block 9 navigation metrics, freeze, report, protocol checks
+│   └── fixtures/
+│       └── pi_session_mi_difference.jsonl  # Trimmed pilot Pi session used by test_pi_bench.py
 ├── eval/
-│   ├── PROTOCOL.md               # Block 9: Pi benchmark method
-│   ├── tasks.json                # 10 bug-injection tasks (more-itertools, click)
-│   ├── pi_bench.py               # Helper: prepare a run for interactive Pi, collect its measurements
+│   ├── PROTOCOL.md               # Block 9: Pi benchmark method and hypotheses H1-H3
+│   ├── tasks.json                # 10 bug-injection tasks (6 direct, 4 call-graph)
+│   ├── pi_bench.py               # Helper: freeze, prepare a run for interactive Pi, collect and report
 │   └── work/                     # (git-ignored) cloned repos, test venv, run outputs
 ├── ai_log/
 │   ├── AI_USE_LOG.md             # R3: Summary of AI work sessions, prompts & fixes
@@ -313,7 +388,7 @@ OOM-Guard/
 ├── LICENSE                       # MIT License
 ├── main.py                       # Placeholder entry point (not used by the server)
 ├── pyproject.toml                # Project metadata & pytest configuration
-├── todo.md                       # 22-phase implementation plan
+├── todo.md                       # 27-phase implementation plan
 └── README.md                     # This document
 ```
 
