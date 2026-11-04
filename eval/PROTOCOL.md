@@ -10,7 +10,7 @@ This document is the full method of the project's own benchmark: what is compare
 
 Does giving a small local model ACC-MCP make it **cheaper to find and read the code it needs**, without making it **worse at fixing the bug**, when the model works inside a real coding agent?
 
-The comparison is against what the agent really does without ACC-MCP, not against reading whole files. In the pilot session (section 9) the agent found the function with `grep -n` and read it in 10-100 line windows with `read`; it never loaded the ~45K-token file. So the baseline is the agent's own `grep` + windowed `read` strategy.
+The comparison is against what the agent really does without ACC-MCP, not against reading whole files. In the pilot session (section 9) the agent found the function with `grep -n` and read it in 10-100 line windows with `read`; it never loaded the ~47K-token file. So the baseline is the agent's own `grep` + windowed `read` strategy.
 
 - **H1 (navigation cost):** with ACC-MCP the agent needs **fewer navigation calls** before it edits the target function, and **fewer code-reading tokens** (output of `read`, `grep`, `sed`, ... plus ACC-MCP slices) than with its own `grep` + `read` strategy.
 - **H2 (success):** with ACC-MCP the agent resolves **at least as many** tasks as without it.
@@ -44,7 +44,7 @@ What the comparison needs is **real, popular code with files large enough that r
 | Package layout | `more_itertools/` at the repo root | `src/click/` (tests need `PYTHONPATH=src`, plus a metadata-only install, section 4.3) |
 | Test suite | `tests/`, `unittest.TestCase` classes, run with pytest | `tests/`, plain pytest |
 | Files with injected bugs | `more_itertools/more.py`: 5,644 lines, ~175 KB; `recipes.py` | `src/click/core.py`: 3,799 lines; `types.py`: 1,422; `parser.py`: 533; `formatting.py`: 320 |
-| Why chosen | `more.py` is about 45K tokens, **larger than the model's 30,208-token context window**: the agent cannot read it whole and has to find the right function. Hundreds of small, independent functions. | Real class hierarchy (`Command`, `Parameter`, `Option`, `HelpFormatter`) with code split across modules, so callers and callees matter (Tier 2). `core.py` alone is also larger than a comfortable read. |
+| Why chosen | `more.py` is about 47K tokens (tiktoken; about 45K at characters / 3.8), **larger than the model's 30,208-token context window**: the agent cannot read it whole and has to find the right function. Hundreds of small, independent functions. | Real class hierarchy (`Command`, `Parameter`, `Option`, `HelpFormatter`) with code split across modules, so callers and callees matter (Tier 2). `core.py` alone is also larger than a comfortable read. |
 
 Both repos are cloned shallowly at the pinned tag (`setup`). Sizes are for these tags.
 
@@ -85,7 +85,7 @@ Exact before/after strings and full bug reports are in `tasks.json`. more-iterto
 
 ### 4.3 Validation (before any run)
 
-`python3 eval/pi_bench.py validate`:
+`uv run python eval/pi_bench.py validate`:
 1. Runs each repository's full test suite on the clean code and stores the failing tests, if any, as the **baseline** (`eval/work/baseline/<repo>.json`). These are not counted against the agent later. **A clean suite that passes 0 tests fails validation**, because then the "no new failures" check in section 7 would compare against nothing.
 2. For each task, checks that the "before" string occurs exactly once in the file, that the target tests pass on the clean code, and that at least one target test fails with the bug.
 
@@ -237,16 +237,16 @@ All metrics come from files written during the run (Pi's session file, the ACC-M
 
 ## 11. Running it
 
-From the repository root, with the model already running on port 8080:
+From the repository root, with the model already running on port 8080. `pi_bench.py` is run through `uv run python` because it needs Python 3.11+ (`tomllib`) and macOS's own `/usr/bin/python3` is 3.9; it also calls `uv` itself to create the test venv. Installing `uv`, `llama.cpp`, Pi and the model is described in `README.md` section 6.
 
 One-time preparation:
 
 ```bash
 uv sync                                   # ACC-MCP must be importable from .venv
-python3 eval/pi_bench.py setup            # clone both repos at their tags, create eval/work/venv, click metadata stub
-python3 eval/pi_bench.py validate         # both clean suites pass > 0 tests, all 10 tasks OK
-python3 eval/pi_bench.py doctor           # model, Pi version; acc-mcp must be connected with 4 tools
-python3 eval/pi_bench.py freeze           # record commit, model file, quantization, llama-server build, Pi, window, budget
+uv run python eval/pi_bench.py setup            # clone both repos at their tags, create eval/work/venv, click metadata stub
+uv run python eval/pi_bench.py validate         # both clean suites pass > 0 tests, all 10 tasks OK
+uv run python eval/pi_bench.py doctor           # model, Pi version; acc-mcp must be connected with 4 tools
+uv run python eval/pi_bench.py freeze           # record commit, model file, quantization, llama-server build, Pi, window, budget
 ```
 
 `freeze` writes `eval/work/runs/bench1/setup.json` and refuses while the model is not running, Pi is missing, a clean suite passes 0 tests, or `src/`, `eval/pi_bench.py`, `eval/tasks.json`, `eval/PROTOCOL.md`, `pyproject.toml` or `uv.lock` have uncommitted changes (the commit hash would not identify the code). After that, `prepare` refuses a run whose context window or `tasks.json` differs from the frozen setup. A changed setup needs a new `--run-id`.
@@ -254,21 +254,21 @@ python3 eval/pi_bench.py freeze           # record commit, model file, quantizat
 For each task, plain first, then acc:
 
 ```bash
-python3 eval/pi_bench.py prepare mi_split_at --mode plain       # prints the next steps and the prompt
+uv run python eval/pi_bench.py prepare mi_split_at --mode plain       # prints the next steps and the prompt
 bash eval/work/runs/bench1/plain/mi_split_at/start.sh           # interactive Pi; paste the prompt; quit when done
-python3 eval/pi_bench.py collect mi_split_at --mode plain --notes "found it with grep, fixed in 6 steps"
+uv run python eval/pi_bench.py collect mi_split_at --mode plain --notes "found it with grep, fixed in 6 steps"
 
-python3 eval/pi_bench.py prepare mi_split_at --mode acc
+uv run python eval/pi_bench.py prepare mi_split_at --mode acc
 bash eval/work/runs/bench1/acc/mi_split_at/start.sh
-python3 eval/pi_bench.py collect mi_split_at --mode acc --notes "..."
+uv run python eval/pi_bench.py collect mi_split_at --mode acc --notes "..."
 ```
 
 Progress and results:
 
 ```bash
-python3 eval/pi_bench.py list             # which task/mode pairs are prepared or collected
-python3 eval/pi_bench.py report           # writes eval/results.md
-python3 eval/pi_bench.py report --run-id bench1 --run-id bench2 --run-id nohint1   # every run, one section each
+uv run python eval/pi_bench.py list             # which task/mode pairs are prepared or collected
+uv run python eval/pi_bench.py report           # writes eval/results.md
+uv run python eval/pi_bench.py report --run-id bench1 --run-id bench2 --run-id nohint1   # every run, one section each
 ```
 
 `results.md` has, per run id: the frozen setup; a summary per mode and per task kind (resolved, navigation calls before the target edit, code-reading tokens, wasted and large reads, peak context, prompt tokens, model calls, minutes); ACC-MCP use, tiers and escalations with the online miss rate; a paired plain / acc table per task; and every run with the operator's notes.

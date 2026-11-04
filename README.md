@@ -9,7 +9,7 @@
 > **Course:** Coding for AI & Data Science — Final Project (2026–2027)  
 > **Target Model:** Qwen3.5-4B (GGUF, served locally by `llama-server`). The trace runs used `Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf`, a community fine-tune of Qwen3.5-4B quantized to Q6_K, with ACC-MCP at commit `d52cf62`; `pi_bench.py freeze` was not run for them  
 > **Course Building Blocks:** **Block 2**, **Block 3**, **Block 4**, **Block 5**, **Block 7**, **Block 8** (the Pi benchmark in `eval/` is exploratory and not a claimed block)  
-> **Requirements Addressed:** **R1** (It Runs), **R2** (Automated Tests), **R3** (AI-Use Log), **R4** (Defence Readiness)  
+> **Requirements Addressed:** **R1** (It Runs), **R2** (It Is Checked), **R3** (AI-Use Log), **R4** (Individual Defence)  
 
 ---
 
@@ -17,7 +17,7 @@
 
 Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project uses 30,208 tokens, the per-slot window `llama-server` reports on the reference machine). Inside a coding agent, the model does not usually read whole files into that window. It **navigates**: it searches with `grep`/`find`, then reads the file in line windows (`read` with `offset`/`limit`), and some of those windows land in the wrong place. Every search and every window is another tool call whose output stays in the conversation.
 
-This is what the pilot session showed (plain Pi, a bug in more-itertools' `difference`, inside a 5,644-line file of about 45K tokens; the session is not part of the results). The agent never read the whole file. It found the function with `find | xargs grep` and `grep -n`, then read it in 6 windows of 10-100 lines, 2 of which missed the function. Code reading was 10 of its 65 tool calls; 48 were its own Python experiments.
+This is what the pilot session showed (plain Pi, a bug in more-itertools' `difference`, inside a 5,644-line file of about 47K tokens; the session is not part of the results). The agent never read the whole file. It found the function with `find | xargs grep` and `grep -n`, then read it in 6 windows of 10-100 lines, 2 of which missed the function. Code reading was 10 of its 65 tool calls; 48 were its own Python experiments.
 
 **Adaptive Context Compressor (ACC-MCP)** is a Model Context Protocol (MCP) server that gives the agent **symbol-level navigation** instead. `find_symbol` says where a class, function or method is defined, and `get_adaptive_context` returns exactly that symbol at the depth the task needs: signatures (Tier 1), signatures plus callers and callees (Tier 2), or the verbatim body with its real line numbers (Tier 3). A **Decision Model** picks the tier from the task intent. Rules written in code enforce a token ceiling, a per-session token budget, and which files may be read at all.
 
@@ -124,7 +124,7 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
         """Yield lists of items from *iterable*, where each list is delimited by
     ...                                   (Tier 3, 658 tokens of a ~47K-token file)
   ```
-  The model then edited `split_at` directly (2 navigation calls before the first edit). It later called `get_adaptive_context` once more with `min_tier=3`. The run **resolved** the bug, but only after a wrong first fix: 98 model calls and 22.6 minutes in total, with 20 edits and 74 bash commands. This is one run, a trace that the server works inside a real agent, not a measurement.
+  The model then edited `split_at` directly (2 navigation calls before the first edit). It later called `get_adaptive_context` once more with `min_tier=3`. Both slices were Tier 3. For the first one the decision model chose Tier 3 itself, although by the dataset's own labelling rule ("reaches callers or callees") the intent "check signature and trace callers" is Tier 2: a false alarm, which happened to help because the agent went on to edit the body. The second tier was forced by `min_tier=3`. The run **resolved** the bug, but only after a wrong first fix: 98 model calls and 22.6 minutes in total, with 20 edits and 74 bash commands. This is one run, a trace that the server works inside a real agent, not a measurement.
 
 ### Block 3: A Rule Enforced in Code (`src/acc_mcp/guard.py`)
 - **Implementation:** Deterministic checks in Python that run before any code is read or served.
@@ -170,7 +170,7 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
   - Most errors come from the keyword classifier, not the weights. Intents with no keyword fall back to $x_1 = 1$. Caller questions phrased with inspection words ("Find every function that calls…") get $x_1 = 0$. Body edits phrased with Tier 2 verbs ("Add retry logic inside…") get $x_1 = 1$.
 - **Limits of this measurement:** the labels and intents were written by the project author, not collected from users. Train and holdout tasks can share a code snippet, so $x_2$–$x_4$ values are not fully unseen. Only 2 intents are real (from the server ledger). The acc trace run added two more real ones ("check signature and trace callers", "fix debug"); they are not in the dataset.
 - **Online signal (tooling only):** in real use a miss shows up in two ways. An **explicit escalation** is the agent calling again with a `min_tier` above the model's tier (`escalation_rate` in `get_token_ledger`). A **silent escalation** is the agent getting a Tier 1 or Tier 2 slice and then reading some of the same lines itself within the next 5 tool calls. `eval/pi_bench.py` measures both. The one acc trace run so far had 2 slices, both Tier 3, with no escalation of either kind. That is not a rate, so no online miss rate is claimed.
-- **Which tiers bug fixes exercise:** bug fixes need the body, so the decision model mostly picks Tier 3 for them; it did so for both slices of the trace run. The exploratory benchmark therefore has 4 call-graph tasks (the report names a function whose helper has the bug), so that Tier 1 and Tier 2 would be used at all.
+- **Which tiers bug fixes exercise:** a bug fix needs the body, so a bug-fix task should end at Tier 3; the exploratory benchmark therefore has 4 call-graph tasks (the report names a function whose helper has the bug), so that Tier 1 and Tier 2 would be used at all. In the trace run the first slice was Tier 3 for the wrong reason: the intent "check signature and trace callers" ties 2:2 between depth-0 words (`check`, `signature`) and depth-1 words (`trace`, `callers`), the tie goes to the deeper depth ($x_1 = 1$), and with no resolved callers ($x_3 = 0$) $P(\text{Full})$ lands above $\theta_{\text{high}}$. By the dataset's labelling rule that request is Tier 2, so it counts as a false alarm.
 - **Uncertainty and a learned alternative:** see Block 8 for intervals on these holdout numbers and Block 7 for a Naive Bayes intent model compared with the keyword rule.
 
 ### Block 5: Memory or Context Budget Management (`src/acc_mcp/budget.py`, `src/acc_mcp/index.py`)
@@ -198,7 +198,7 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
   Naive Bayes holdout confusion matrix (rows = actual tier, columns = predicted 1/2/3): Tier 1 `5 3 1`, Tier 2 `4 3 2`, Tier 3 `3 3 6`. The keyword rule's: Tier 1 `8 1 0`, Tier 2 `1 8 0`, Tier 3 `1 6 5`.
 - **It overfits:** 98.6% on its own 70 train tasks against 46.7% on the holdout. With 70 short intents, most words occur in only one or two of them.
 - **What it learned:** the most likely words of every tier are shared ones ("the", "does", "of", "and"). The most distinctive words are: Tier 1 `arguments`, `take`, `type`, `inspect`; Tier 2 `update`, `callers`, `rename`, `calls`, `sites`; Tier 3 `loop`, `fix`, `logic`, `implement`. These are close to the keyword lists, plus topic words like `loop` or `config` that only happen to occur in one tier.
-- **Result:** Naive Bayes does **not** beat the keyword rule. On this split it is 23.3 points lower, and averaged over 50 splits it is 59.4% against 69.2% (Block 8). Of its 16 holdout errors, the keyword rule got 9 right. The keyword rule stays in the server; a learned intent model would need many more, and real, intents.
+- **Result:** Naive Bayes does **not** beat the keyword rule. On this split it is 23.3 points lower, and averaged over 50 splits it is 59.4% against 69.2% (Block 8). Of its 16 holdout errors, the keyword rule got 9 right. The server is unchanged: it keeps using the Block 4 logistic model, whose $x_1$ comes from the keyword rule, and Naive Bayes is not wired in. A learned intent model would need many more, and real, intents.
 - **Evidence:** [`tests/test_intent_model.py`](tests/test_intent_model.py): smoothing checked by hand on a 6-intent set, fitting only on train intents, all models scored on the same holdout ids, metrics consistent with the confusion matrix, reproducible report.
 
 ### Block 8: Uncertainty on the Holdout (`src/acc_mcp/uncertainty.py`)
@@ -252,47 +252,55 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
 
 ## 5. Course Verification Checklist (R1–R4)
 
-| Requirement | Description | Status | Evidence |
+| Requirement | What the course asks | Status | Evidence |
 | :--- | :--- | :---: | :--- |
-| **R1 (It Runs)** | Runs inside a real agent (Pi) against a local `llama-server` with Qwen3.5-4B. | **VERIFIED** | Run `bench1`, acc, `mi_split_at` (trace in [`eval/traces/bench1_acc_mi_split_at/`](eval/traces/bench1_acc_mi_split_at/); model `Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf`, ACC-MCP commit `d52cf62`): Pi called `mcp__acc_mcp__find_symbol {"name": "split_at"}` and got `more_itertools/more.py` lines 1569-1610. It then called `get_adaptive_context` and got the verbatim Tier 3 slice `# more.py lines 1569-1610: split_at`, and the run resolved the bug. Full quote under Block 2. |
-| **R2 (Automated Tests)** | `pytest` suite for parser, call graph, guard, decision model, budget, index, server, the Block 7 intent model, the Block 8 statistics, and the benchmark's measurement code. | **VERIFIED** | 307 tests in 13 test files, all passing in the Phase 30 run (`uv run pytest`). |
-| **R3 (AI-Use Log)** | Work session transcripts recorded in `ai_log/` with prompt refinements and code fixes. | **VERIFIED** | [`ai_log/AI_USE_LOG.md`](ai_log/AI_USE_LOG.md) and the session transcripts in [`ai_log/`](ai_log). |
-| **R4 (Defence Readiness)** | Modular code with one job per file. | **VERIFIED** | `parser.py`, `guard.py`, `decision.py`, `evaluate_decision.py`, `budget.py`, `index.py`, `tokens.py`, `server.py`. |
+| **R1 (It Runs)** | Runs on the project's model, from this README, on a fresh clone, in a few commands. No API key, password or personal data in the repository. | **VERIFIED** | **Fresh clone:** the [Quick Start](#6-quick-start-fresh-clone) is 3 commands to install and test, and 3 more to run ACC-MCP inside Pi on the local model. **On the model:** run `bench1`, acc, `mi_split_at` (trace in [`eval/traces/bench1_acc_mi_split_at/`](eval/traces/bench1_acc_mi_split_at/); model `Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf`, ACC-MCP commit `d52cf62`): Pi called `mcp__acc_mcp__find_symbol {"name": "split_at"}` and got `more_itertools/more.py` lines 1569-1610, then called `get_adaptive_context` and got the verbatim Tier 3 slice `# more.py lines 1569-1610: split_at`, and the run resolved the bug (full quote under Block 2). **No secrets:** the model runs locally through `llama-server`, so no API key is needed or stored. |
+| **R2 (It Is Checked)** | Automated tests with known answers for the project's own code; they pass on a fresh clone. | **VERIFIED** | 307 `pytest` tests in 13 files, all passing (`uv run pytest`). The answers are fixed in the tests: hand-counted metrics and confusion matrices, known Wilson intervals and McNemar p-values, exact line ranges of served slices, rejected paths (symlink to `.env`, `../`, outside the root), and the navigation counts of a trimmed real Pi session checked by hand. Tests need no model, no running server and no files outside the repository; the benchmark tests use temporary folders and a fixture. |
+| **R3 (AI-Use Log)** | The export of the conversations with AI tools, and for each work session a note: what was kept as it was, what was fixed by hand, and which prompt or pseudo-code line was rewritten and why. | **PARTIAL** | Exported sessions in [`ai_log/`](ai_log) and notes in [`ai_log/AI_USE_LOG.md`](ai_log/AI_USE_LOG.md) (prompt refinements, manual corrections). The notes are being reorganised into one entry per session with the three points above. The sessions of Phases 4–20 are described from `todo.md` and the commit history only, because their transcripts are not in the folder. |
+| **R4 (Individual Defence)** | The student runs the demo and explains a piece of code the teacher picks. | **AT THE DEFENCE** | Demo: the [Quick Start](#6-quick-start-fresh-clone) commands. Code is split one job per module, so any piece can be explained on its own: `parser.py` (AST, call graph, tiers), `guard.py` (path rule, ceiling), `decision.py` and `evaluate_decision.py` (Block 4), `budget.py` and `index.py` (Block 5), `server.py` (Block 2), `intent_model.py` (Block 7), `uncertainty.py` (Block 8), `tokens.py` (token counting). |
 
 ---
 
-## 6. Installation & Quickstart
+## 6. Quick Start (Fresh Clone)
 
 ### Prerequisites
-- Python 3.12+
-- `uv` (recommended) or standard `pip`
+No API key or account is needed: everything runs locally. Commands below are for macOS with Homebrew; links for other systems are given.
 
-### 1. Installation
+| What | Needed for | Install |
+| :--- | :--- | :--- |
+| `git` | everything | preinstalled on macOS, or [git-scm.com](https://git-scm.com/downloads) |
+| [`uv`](https://docs.astral.sh/uv/) | everything (it also installs Python 3.12 if missing, from `.python-version`) | `brew install uv`, or `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| [`llama.cpp`](https://github.com/ggml-org/llama.cpp) (`llama-server`) | the agent run | `brew install llama.cpp`, or a [release build](https://github.com/ggml-org/llama.cpp/releases) |
+| [Pi coding agent](https://pi.dev/) 1.0.2+ | the agent run | `brew install pi-coding-agent` |
+| Qwen3.5-4B GGUF (~3.5 GB at Q6_K) | the agent run | downloaded by `llama-server -hf` (below), or by hand from Hugging Face |
+
+The model used for the recorded trace is [`HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive`](https://huggingface.co/HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive), file `Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf` (a community fine-tune of Qwen3.5-4B). The plain base model in the same quantization is [`unsloth/Qwen3.5-4B-GGUF`](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF), file `Qwen3.5-4B-Q6_K.gguf`; either works with ACC-MCP.
+
+### 1. Install and test (R2)
 ```bash
-git clone https://github.com/nefelim584/OOM-Guard.git
-cd OOM-Guard
-
-# Using uv (fastest)
-uv sync
-
-# Or using pip in a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+git clone https://github.com/Nefelim584/OOM-Guard.git && cd OOM-Guard
+uv sync                    # creates .venv with Python 3.12 and installs mcp, tiktoken, pytest
+uv run pytest -q           # 307 tests, no model needed
 ```
+Without `uv`: `python3.12 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]" && python -m pytest -q`.
 
-### 2. Running the Automated Test Suite (R2)
+### 2. Run ACC-MCP inside Pi on the local model (R1)
 ```bash
-uv run pytest
+# terminal 1: the model (the first run downloads it into the llama.cpp cache)
+llama-server -hf HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive:Q6_K -c 30208 --parallel 1 --port 8080
 
-# Or directly via python3
-python3 -m pytest
+# terminal 2, in OOM-Guard/
+uv run python eval/pi_bench.py setup        # once: clones more-itertools and click, creates eval/work/venv
+uv run python eval/pi_bench.py prepare mi_is_sorted --mode acc --run-id demo
+bash eval/work/runs/demo/acc/mi_is_sorted/start.sh   # opens Pi; paste the prompt that prepare printed
 ```
+With a GGUF file you already have, use `llama-server -m /path/to/file.gguf` instead of `-hf ...`. Pi starts ACC-MCP over stdio; the model's first tool calls are `mcp__acc_mcp__find_symbol` and `mcp__acc_mcp__get_adaptive_context`. `prepare` prints a warning that run `demo` is not frozen; that only matters for counted benchmark runs. `pi_bench.py` is run through `uv run python` because it needs Python 3.11+ (`tomllib`), and macOS's own `/usr/bin/python3` is 3.9. To use ACC-MCP on your own project instead, see section 7.
 
-### 3. Fitting and Evaluating the Decision Model (Block 4)
+### 3. Reports for Blocks 4, 7 and 8
 ```bash
-# Fits the weights on the train split and prints train and holdout metrics separately
-uv run python src/acc_mcp/evaluate_decision.py
+uv run python src/acc_mcp/evaluate_decision.py   # Block 4: fit on the train split, train and holdout metrics
+uv run python src/acc_mcp/intent_model.py        # Block 7: Naive Bayes vs the two baselines on the same holdout
+uv run python src/acc_mcp/uncertainty.py         # Block 8: intervals, McNemar, 50-split sweep (about a minute)
 ```
 
 ---
@@ -301,16 +309,19 @@ uv run python src/acc_mcp/evaluate_decision.py
 
 ### 1. Serve Qwen3.5-4B with `llama-server` (`llama.cpp`)
 ```bash
-# With a GGUF you already have
-llama-server -m /path/to/Qwen3.5-4B-Q4_K_M.gguf -c 30208 --parallel 1 --port 8080
+# Let llama.cpp download the model from Hugging Face (the model of the recorded trace)
+llama-server -hf HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive:Q6_K -c 30208 --parallel 1 --port 8080
 
-# Or let llama.cpp fetch it from Hugging Face
-llama-server -hf unsloth/Qwen3.5-4B-GGUF:Q4_K_M -c 30208 --parallel 1 --port 8080
+# Or the plain base model
+llama-server -hf unsloth/Qwen3.5-4B-GGUF:Q6_K -c 30208 --parallel 1 --port 8080
+
+# Or a GGUF file you already have
+llama-server -m /path/to/Qwen3.5-4B-Q6_K.gguf -c 30208 --parallel 1 --port 8080
 ```
 This gives an OpenAI-compatible endpoint at `http://127.0.0.1:8080/v1`. Check the window with `curl -s http://127.0.0.1:8080/props`: `default_generation_settings.n_ctx` should be 30,208; the benchmark reads it from there.
 
-### Pi coding agent
-Pi (1.0.2+) has built-in MCP support. Register ACC-MCP for the project the agent works on:
+### 2. Register ACC-MCP in Pi
+Pi (1.0.2+) has built-in MCP support. After `uv sync` in `OOM-Guard/`, register ACC-MCP for the project the agent works on:
 ```bash
 cd /path/to/the/project
 pi mcp add acc-mcp --exposure direct \
@@ -320,7 +331,7 @@ pi mcp list    # should show acc-mcp connected with 4 tools
 ```
 `direct` exposure declares the four tools to the model like built-in tools (`mcp__acc_mcp__get_adaptive_context`, ...). The benchmark runner writes an equivalent config into an isolated Pi config folder for each run, so no global setup is needed for `eval/`.
 
-### 2. Register ACC-MCP as a stdio MCP server
+### 3. Other MCP clients
 Other MCP clients (Claude Desktop, Cursor) can start the server with a config like this:
 ```json
 {
@@ -349,7 +360,7 @@ OOM-Guard/
 │   └── acc_mcp/
 │       ├── __init__.py           # Package exports
 │       ├── parser.py             # AST parsing, complexity, call graph, Tier 1/2/3 slices
-│       ├── tokens.py             # Pluggable token counter (llama-server/Ollama endpoint, tiktoken fallback)
+│       ├── tokens.py             # Token counters: tiktoken / chars÷3.8 (used by the server); llama-server/Ollama endpoint counter (not wired in)
 │       ├── guard.py              # Block 3: Workspace/path rules & token ceiling
 │       ├── decision.py           # Block 4: Intent classifier, logistic scoring, weight fitting
 │       ├── evaluate_decision.py  # Block 4: Train/holdout split, weight fit, and report
@@ -389,7 +400,6 @@ OOM-Guard/
 ├── AGENTS.md                     # Instructions for AI coding agents working on this repo
 ├── Description.md                # Project proposal / formal description
 ├── LICENSE                       # MIT License
-├── main.py                       # Placeholder entry point (not used by the server)
 ├── pyproject.toml                # Project metadata & pytest configuration
 ├── todo.md                       # 30-phase implementation plan
 └── README.md                     # This document

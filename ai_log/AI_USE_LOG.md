@@ -2,15 +2,15 @@
 
 **Project:** Adaptive Context Compressor MCP (ACC-MCP / OOM-Guard)  
 **Course:** Coding for AI & Data Science — Final Project (2026–2027)  
-**Target Model:** Qwen3.5-4B (quantized GGUF via `llama-server`; file and quantization recorded per benchmark run)  
+**Target Model:** Qwen3.5-4B (GGUF via `llama-server`); the recorded trace used `Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf`  
 **Building Blocks Implemented:** Block 2, Block 3, Block 4, Block 5, Block 7, Block 8 (Pi benchmark exploratory)  
-**Requirements Addressed:** R1 (It Runs), R2 (Automated Tests), R3 (AI-Use Log), R4 (Defence Readiness)  
+**Requirements Addressed:** R1 (It Runs), R2 (It Is Checked), R3 (AI-Use Log), R4 (Individual Defence)  
 
 ---
 
 ## 1. Overview and Chronology of AI Collaboration
 
-This document fulfills course requirement **R3 (AI-Use Log)** by recording work sessions, prompt refinements, design decisions, manual code corrections, and debugging interventions. The plan lives in `todo.md` (30 phases). Exported session transcripts are in this folder (`*.md`).
+This document fulfills course requirement **R3 (AI-Use Log)** by recording work sessions, prompt refinements, design decisions, manual code corrections, and debugging interventions. The plan lives in `todo.md` (30 phases). Exported session transcripts are in this folder: `todo-generation-and-project-planning--8027412e.md` and `continuing-phase-3-project--85952ca6.md` (planning and Phases 1–3), and `2026-11-04_phases-23-29.txt` (Phases 23–29, Claude Code).
 
 ### Phases 1–10: First build
 
@@ -180,7 +180,7 @@ The Phase 10 sign-off reported 110 passing tests, "full coverage", and a 30-run 
 
 ### Current status (Phase 30)
 - **Claimed blocks:** 2, 3, 4, 5, 7, 8. The Pi benchmark (`eval/`) is exploratory and not claimed.
-- **Test Suite:** 13 test files. The real count goes into the README badge and the R2 row after the next full run (Step 30.5).
+- **Test Suite:** 307 tests in 13 files, all passing, also on a fresh clone.
 - **Decision Model (Block 4):** holdout accuracy 70.0% (95% interval 52.1–83.3%), not significantly better than the hand-picked weights; 63.7% on average over 50 splits.
 - **Learned intent model (Block 7):** 46.7% holdout accuracy, below the keyword rule's 70.0%; not used by the server.
 - **R1:** verified by the acc trace run `bench1/acc/mi_split_at`.
