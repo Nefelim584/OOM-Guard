@@ -7,6 +7,7 @@ from acc_mcp.decision import (
     DecisionModel,
     DecisionResult,
     TaskIntentClassifier,
+    fit_weights,
 )
 from acc_mcp.guard import GuardRail, SecurityViolationError
 from acc_mcp.parser import ASTParser
@@ -25,6 +26,16 @@ def classifier() -> TaskIntentClassifier:
 @pytest.fixture
 def decision_model() -> DecisionModel:
     return DecisionModel()
+
+
+@pytest.fixture
+def policy_model() -> DecisionModel:
+    """Model with fixed weights (the pre-Phase 21 hand-picked ones).
+
+    Threshold-policy and tier-dispatch tests use it so they check the policy and dispatch
+    code, not whatever weights the current fit produces.
+    """
+    return DecisionModel(w0=-2.0, w1=2.0, w2=0.2, w3=0.3, w4=1.0)
 
 
 @pytest.mark.parametrize(
@@ -249,8 +260,9 @@ def test_sigmoid_probability_bounds(decision_model: DecisionModel):
 # ---------------------------------------------------------------------------
 
 
-def test_tier_selection_boundaries(decision_model: DecisionModel):
-    """Verify tier assignment based on calibrated thresholds theta_low=0.30, theta_high=0.65."""
+def test_tier_selection_boundaries(policy_model: DecisionModel):
+    """Verify tier assignment based on thresholds theta_low=0.30, theta_high=0.65."""
+    decision_model = policy_model
     # Tier 1 case: low depth, low complexity, rich docstrings -> P < 0.30
     tier1_feat = ContextFeatures(task_depth=0, cyclomatic_complexity=1, in_degree=0, has_annotations=1)
     res1 = decision_model.evaluate(tier1_feat)
@@ -273,16 +285,82 @@ def test_tier_selection_boundaries(decision_model: DecisionModel):
     assert "Full implementation body strictly required" in res3.reasoning
 
 
+def test_default_thresholds_are_unchanged():
+    """Verify Phase 21 refits only the weights; the thresholds stay hand-picked at 0.30 / 0.65."""
+    model = DecisionModel()
+    assert (model.theta_low, model.theta_high) == (0.30, 0.65)
+    assert model.weights == (
+        DecisionModel.DEFAULT_W0,
+        DecisionModel.DEFAULT_W1,
+        DecisionModel.DEFAULT_W2,
+        DecisionModel.DEFAULT_W3,
+        DecisionModel.DEFAULT_W4,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4b. Gradient-Descent Weight Fitting (Step 21.3)
+# ---------------------------------------------------------------------------
+
+
+def _depth_samples() -> list[tuple[ContextFeatures, int]]:
+    """Samples whose tier is exactly x1 + 1, with the AST features held constant per tier."""
+    return [
+        (ContextFeatures(task_depth=depth, cyclomatic_complexity=cc, in_degree=1, has_annotations=1), depth + 1)
+        for depth in (0, 1, 2)
+        for cc in (1, 3, 5)
+    ]
+
+
+def test_fit_weights_is_deterministic():
+    """Verify the fit starts from zero with no randomness, so repeated fits match exactly."""
+    samples = _depth_samples()
+    assert fit_weights(samples) == fit_weights(samples)
+    assert len(fit_weights(samples)) == 5
+
+
+def test_fit_weights_learns_intent_depth():
+    """Verify that when the tier follows x1, the fit gives w1 a large positive weight and every sample its tier."""
+    samples = _depth_samples()
+    weights = fit_weights(samples)
+    model = DecisionModel(*weights)
+
+    assert weights[1] > 1.0
+    for features, tier in samples:
+        assert model.evaluate(features).tier == tier
+
+
+def test_fit_weights_x4_enters_with_minus_sign():
+    """Verify w4 comes out positive when annotated symbols need less context (z uses -w4*x4)."""
+    samples = [
+        (ContextFeatures(task_depth=1, cyclomatic_complexity=2, in_degree=0, has_annotations=x4), tier)
+        for x4, tier in ((1, 1), (0, 3))
+        for _ in range(4)
+    ]
+    weights = fit_weights(samples)
+    model = DecisionModel(*weights)
+
+    assert weights[4] > 0
+    assert model.evaluate(samples[0][0]).probability < model.evaluate(samples[-1][0]).probability
+
+
+def test_fit_weights_stays_finite_on_separable_data():
+    """Verify the L2 penalty keeps the weights bounded when the classes separate perfectly."""
+    weights = fit_weights(_depth_samples(), epochs=20000)
+    assert all(math.isfinite(w) and abs(w) < 50 for w in weights)
+
+
 # ---------------------------------------------------------------------------
 # 5. End-to-End Adaptive Context Retrieval Tests (Step 4.3)
+#    Dispatch is tested with the fixed-weight policy model so it does not depend on the fit.
 # ---------------------------------------------------------------------------
 
 
 def test_adaptive_context_tier1_dispatch(
-    decision_model: DecisionModel, complex_parser: ASTParser, default_guard: GuardRail
+    policy_model: DecisionModel, complex_parser: ASTParser, default_guard: GuardRail
 ):
     """Verify inspection intent triggers Tier 1 context containing stubbed bodies."""
-    context, result = decision_model.get_adaptive_context(
+    context, result = policy_model.get_adaptive_context(
         task_intent="Inspect type hints and signature for log_audit",
         parser=complex_parser,
         symbol_name="log_audit",
@@ -296,10 +374,10 @@ def test_adaptive_context_tier1_dispatch(
 
 
 def test_adaptive_context_tier2_dispatch(
-    decision_model: DecisionModel, complex_parser: ASTParser, default_guard: GuardRail
+    policy_model: DecisionModel, complex_parser: ASTParser, default_guard: GuardRail
 ):
     """Verify refactor/dependency query triggers Tier 2 context containing call-graph."""
-    context, result = decision_model.get_adaptive_context(
+    context, result = policy_model.get_adaptive_context(
         task_intent="Trace callers and refactor dependencies of validate_user",
         parser=complex_parser,
         symbol_name="validate_user",
@@ -313,10 +391,10 @@ def test_adaptive_context_tier2_dispatch(
 
 
 def test_adaptive_context_tier3_dispatch(
-    decision_model: DecisionModel, complex_parser: ASTParser, default_guard: GuardRail
+    policy_model: DecisionModel, complex_parser: ASTParser, default_guard: GuardRail
 ):
     """Verify rewrite/bug fix query triggers Tier 3 context containing full implementation body."""
-    context, result = decision_model.get_adaptive_context(
+    context, result = policy_model.get_adaptive_context(
         task_intent="Rewrite and fix bug in validate_user logic",
         parser=complex_parser,
         symbol_name="validate_user",

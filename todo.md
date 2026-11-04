@@ -162,10 +162,10 @@
 
 ## Phase 21: Honest Calibration of the Decision Model
 *Feature: Turn Block 4 from hand-picked weights measured on their own dataset into a model that is fitted on training data and reported on data it has never seen.*
-- [ ] Step 21.1: Expand `data/decision_dataset.json` to roughly 100 short task intents labeled with a ground-truth tier, since the classifier reads text and 20 examples over 4 features cannot support a 100% accuracy claim. Include real `task_intent` strings collected from the Pi runs in Phase 14.
-- [ ] Step 21.2: Add a 70/30 train/holdout split, stratified by ground-truth tier, so every tier is represented on both sides.
-- [ ] Step 21.3: Fit the four weights ($w_0 \dots w_4$) with plain gradient descent on the train split instead of setting them by hand (about 20 lines, no new dependencies), and check whether $x_2$, $x_3$, and $x_4$ now influence the outcome at all.
-- [ ] Step 21.4: Report accuracy, the 3x3 confusion matrix from Phase 20, miss rate, and false alarm rate separately for train and holdout; update the assertions in `tests/test_decision.py` (which pin tiers to the old weights) and `tests/test_decision_eval.py` (which assume the 20-task dataset).
+- [x] Step 21.1: Expand `data/decision_dataset.json` to roughly 100 short task intents labeled with a ground-truth tier, since the classifier reads text and 20 examples over 4 features cannot support a 100% accuracy claim. Include real `task_intent` strings collected from the Pi runs in Phase 14. *(Done with 100 tasks; Phase 14 Pi runs do not exist yet, so only the 2 real intents from the server ledger are included. Add Pi intents when those runs exist.)*
+- [x] Step 21.2: Add a 70/30 train/holdout split, stratified by ground-truth tier, so every tier is represented on both sides.
+- [x] Step 21.3: Fit the four weights ($w_0 \dots w_4$) with plain gradient descent on the train split instead of setting them by hand (about 20 lines, no new dependencies), and check whether $x_2$, $x_3$, and $x_4$ now influence the outcome at all.
+- [x] Step 21.4: Report accuracy, the 3x3 confusion matrix from Phase 20, miss rate, and false alarm rate separately for train and holdout; update the assertions in `tests/test_decision.py` (which pin tiers to the old weights) and `tests/test_decision_eval.py` (which assume the 20-task dataset).
 - [ ] Step 21.5: Run the full test suite, put the holdout numbers in `README.md` whatever they turn out to be, and suggest commit name: `feat(decision): fit logistic weights on held-out split with expanded intent dataset`.
 
 ## Phase 22: Documentation Cleanup and Final Verification (R1-R4)

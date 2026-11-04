@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from acc_mcp.guard import GuardRail
@@ -47,6 +48,46 @@ class DecisionResult:
     logit: float  # z
     features: ContextFeatures
     reasoning: str
+
+
+Weights = tuple[float, float, float, float, float]
+
+
+def _sigmoid(z: float) -> float:
+    """1 / (1 + e^(-z)), clamped so extreme logits do not overflow."""
+    if z >= 40:
+        return 1.0
+    if z <= -40:
+        return 0.0
+    return 1.0 / (1.0 + math.exp(-z))
+
+
+def fit_weights(
+    samples: Sequence[tuple[ContextFeatures, int]],
+    learning_rate: float = 0.2,
+    epochs: int = 5000,
+    l2: float = 0.01,
+) -> Weights:
+    """Fit (w0, w1, w2, w3, w4) by batch gradient descent on the logistic loss.
+
+    Each sample is (features, ground-truth tier). The target is y = (tier - 1) / 2, so
+    Tier 1 -> 0, Tier 2 -> 0.5, Tier 3 -> 1: Tier 2 tasks are pulled to P(Full) = 0.5,
+    between the two thresholds. x4 enters the logit with a minus sign, so its column is -x4.
+    Starts from zero with no randomness, so the same samples always give the same weights.
+    A small L2 penalty (not on w0) keeps the weights finite when the data are separable.
+    """
+    rows = [(1.0, *f.to_tuple()[:3], -f.has_annotations) for f, _ in samples]
+    targets = [(tier - 1) / 2 for _, tier in samples]
+    w = [0.0] * 5
+    for _ in range(epochs):
+        grad = [0.0] * 5
+        for x, y in zip(rows, targets):
+            error = _sigmoid(sum(wi * xi for wi, xi in zip(w, x))) - y
+            for i, xi in enumerate(x):
+                grad[i] += error * xi
+        for i in range(5):
+            w[i] -= learning_rate * (grad[i] / len(rows) + (l2 * w[i] if i else 0.0))
+    return (w[0], w[1], w[2], w[3], w[4])
 
 
 def _words(*forms: str) -> str:
@@ -154,12 +195,16 @@ class TaskIntentClassifier:
 class DecisionModel:
     """Logistic scoring model and adaptive tier selection policy (Block 4)."""
 
-    DEFAULT_W0: float = -2.0  # Base intercept
-    DEFAULT_W1: float = 2.0  # Weight for task intent depth x1
-    DEFAULT_W2: float = 0.2  # Weight for cyclomatic complexity x2
-    DEFAULT_W3: float = 0.3  # Weight for in-degree x3
-    DEFAULT_W4: float = 1.0  # Weight for annotations/docstrings x4
+    # Fitted by `fit_weights` on the train split of data/decision_dataset.json (Phase 21);
+    # `python3 src/acc_mcp/evaluate_decision.py` refits them and reports the holdout split.
+    # tests/test_decision_eval.py fails if these drift from the fit.
+    DEFAULT_W0: float = -1.2421  # Base intercept
+    DEFAULT_W1: float = 2.1909  # Weight for task intent depth x1
+    DEFAULT_W2: float = -0.0228  # Weight for cyclomatic complexity x2
+    DEFAULT_W3: float = -0.1530  # Weight for in-degree x3
+    DEFAULT_W4: float = 0.0407  # Weight for annotations/docstrings x4
 
+    # Hand-picked before Phase 21 and not refitted.
     DEFAULT_THETA_LOW: float = 0.30
     DEFAULT_THETA_HIGH: float = 0.65
 
@@ -234,13 +279,14 @@ class DecisionModel:
             - self.w4 * features.has_annotations
         )
 
+    @property
+    def weights(self) -> Weights:
+        """The five logistic weights (w0, w1, w2, w3, w4)."""
+        return (self.w0, self.w1, self.w2, self.w3, self.w4)
+
     def compute_probability(self, logit: float) -> float:
         """Compute P(Full Context Needed) = 1 / (1 + e^(-z)) with numerical stability."""
-        if logit >= 40:
-            return 1.0
-        if logit <= -40:
-            return 0.0
-        return 1.0 / (1.0 + math.exp(-logit))
+        return _sigmoid(logit)
 
     def evaluate(self, features: ContextFeatures) -> DecisionResult:
         """Evaluate features, determine logit, probability, and select context tier."""

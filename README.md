@@ -127,17 +127,27 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 - **Logistic Scoring Function:**
   $$z = w_0 + w_1 x_1 + w_2 x_2 + w_3 x_3 - w_4 x_4$$
   $$P(\text{Full}) = \frac{1}{1 + e^{-z}}$$
-  *Hand-picked weights:* $w_0 = -2.0, w_1 = 2.0, w_2 = 0.2, w_3 = 0.3, w_4 = 1.0$.
-- **Decision Policy Thresholds:** $\theta_{\text{low}} = 0.30, \theta_{\text{high}} = 0.65$ (also hand-picked).
+  *Fitted weights:* $w_0 = -1.2421, w_1 = 2.1909, w_2 = -0.0228, w_3 = -0.1530, w_4 = 0.0407$ (before Phase 21 they were hand-picked: $-2.0, 2.0, 0.2, 0.3, 1.0$).
+- **Decision Policy Thresholds:** $\theta_{\text{low}} = 0.30, \theta_{\text{high}} = 0.65$. These are still hand-picked; only the weights are fitted.
 - **Intent Classifier:** $x_1$ is set by counting keyword hits per depth. Keywords match whole word forms only (`add`, `adds`, `added`, `adding` but not `address`; `type`/`types` but not `typed`; `list` but not the annotation `list[int]`). A query with no keyword hit falls back to $x_1 = 1$.
-- **What really decides the tier:** with these weights the tier is decided almost only by the verb in `task_intent`. Since $x_2 \ge 1$, $x_3 \ge 0$, $x_4 \le 1$:
-  - $x_1 = 2$ gives $z \ge 1.2$, $P \ge 0.77$: **always Tier 3**.
-  - $x_1 = 1$ gives $z \ge -0.8$, $P \ge 0.31$: **never Tier 1**. The AST features only choose between Tier 2 and Tier 3.
-  - $x_1 = 0$ is the only case where the AST features can move the tier, and only for unusually complex or heavily called symbols.
-- **Evaluation on 20 Tasks:** [`data/decision_dataset.json`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/data/decision_dataset.json) has 5 Tier 1, 5 Tier 2, and 10 Tier 3 tasks. Run `python3 src/acc_mcp/evaluate_decision.py` for the 3x3 tier confusion matrix (actual vs predicted tier), per-tier precision and recall, the miss rate (served a lower tier than needed), and the false alarm rate (served a higher tier than needed).
-  - All 20 tasks currently land on their ground-truth tier.
-  - **This is not a measurement on unseen data:** the weights and thresholds were picked by hand while looking at these same 20 tasks, and each tier's tasks use the verbs the classifier looks for. A fitted model with a held-out split is planned in Phase 21.
-  - The real-world signal is `escalation_rate` in `get_token_ledger`: the share of requests where the agent had to raise `min_tier` above the model's choice because the slice it got was not enough.
+- **Dataset:** [`data/decision_dataset.json`](data/decision_dataset.json) has 100 short task intents: 29 Tier 1, 31 Tier 2, 40 Tier 3. Labels follow one rule: Tier 1 if signatures, docstrings or types answer the task; Tier 2 if it reaches callers or callees; Tier 3 if the body must be read or edited. Many intents are written the way people actually ask ("Why does…", "Explain…", "Who calls…") rather than with the classifier's verbs. Tasks share 29 code snippets through `snippet_ref`, so the same symbol appears with intents of different tiers, and called or unannotated symbols appear in every tier.
+- **Fitting:** `fit_weights` in `decision.py` runs plain batch gradient descent on the logistic loss (no new dependencies). The target is $y = (\text{tier} - 1)/2 \in \{0, 0.5, 1\}$, with a small L2 penalty, starting from zero. The split is 70/30, stratified by tier and seeded, so every tier is on both sides. Run `python3 src/acc_mcp/evaluate_decision.py` to refit and print the report; `tests/test_decision_eval.py` fails if the constants in `decision.py` drift from the fit.
+- **Holdout results (30 tasks the fit never saw):**
+
+  | | Accuracy | Miss rate | False alarm rate |
+  | :--- | :---: | :---: | :---: |
+  | Fitted weights, holdout | **70.0%** | **14.3%** (3) | **33.3%** (6) |
+  | Fitted weights, train (70 tasks) | 67.1% | 20.0% (10) | 31.0% (13) |
+  | Old hand-picked weights, same holdout | 66.7% | 28.6% (6) | 22.2% (4) |
+
+  Holdout 3x3 confusion matrix (rows = actual tier, columns = predicted tier 1/2/3): Tier 1 `8 0 1`, Tier 2 `1 3 5`, Tier 3 `1 1 10`. Tier 2 recall is only 33%: most Tier 2 tasks get Tier 3.
+- **What the fit shows:**
+  - The tier is still decided almost entirely by $x_1$. With the fitted weights, on the dataset $x_1 = 0$ gives $P \approx 0.1$–$0.22$ (Tier 1), $x_1 = 2$ gives $P \ge 0.9$ (Tier 3), and $x_1 = 1$ gives $P \approx 0.55$–$0.72$, which sits right on $\theta_{\text{high}}$.
+  - $x_2$ (complexity) and $x_4$ (annotations) get weights near zero. Setting either to 0 changes at most 3 train and 2 holdout tiers, because many $x_1 = 1$ tasks sit so close to $\theta_{\text{high}}$ that a tiny shift moves them.
+  - $x_3$ (in-degree) gets a **negative** weight. For $x_1 = 1$ it decides between Tier 2 (the symbol has callers) and Tier 3 (it has none), and changes 10 train and 4 holdout tiers. This comes from the data, not from a design idea; with this dataset, more callers does not mean more context is needed.
+  - Most errors come from the keyword classifier, not the weights. Intents with no keyword fall back to $x_1 = 1$. Caller questions phrased with inspection words ("Find every function that calls…") get $x_1 = 0$. Body edits phrased with Tier 2 verbs ("Add retry logic inside…") get $x_1 = 1$.
+- **Limits of this measurement:** the labels and intents were written by the project author, not collected from users. Train and holdout tasks can share a code snippet, so $x_2$–$x_4$ values are not fully unseen. Only 2 intents are real (from the server ledger); real Pi intents will be added once the Phase 14 runs exist.
+- The real-world signal is `escalation_rate` in `get_token_ledger`: the share of requests where the agent had to raise `min_tier` above the model's choice because the slice it got was not enough.
 
 ### Block 5: Memory or Context Budget Management (`src/acc_mcp/budget.py`)
 - **Implementation:** An active context budget manager persisting state across agent runs.
@@ -195,8 +205,9 @@ uv run pytest
 python3 -m pytest
 ```
 
-### 3. Running the Decision Model Ground-Truth Benchmark (Block 4)
+### 3. Fitting and Evaluating the Decision Model (Block 4)
 ```bash
+# Fits the weights on the train split and prints train and holdout metrics separately
 python3 src/acc_mcp/evaluate_decision.py
 ```
 
@@ -248,7 +259,7 @@ OOM-Guard/
 │       ├── tokens.py             # Pluggable token counter (Endpoint & Heuristic)
 │       ├── guard.py              # Block 3: Security path rules & AST ceiling slicing
 │       ├── decision.py           # Block 4: Intent classifier & logistic scoring
-│       ├── evaluate_decision.py  # Block 4: Ground-truth benchmark evaluation
+│       ├── evaluate_decision.py  # Block 4: Train/holdout split, weight fit, and report
 │       ├── budget.py             # Block 5: Token ledger & restart recovery cache
 │       ├── index.py              # Block 5: Workspace symbol index (hash-checked cache)
 │       └── server.py             # Block 2: Stdio MCP Server (get_adaptive_context)
@@ -260,7 +271,7 @@ OOM-Guard/
 │   ├── test_callgraph.py         # Cross-file, import-aware call graph tests
 │   ├── test_guard.py             # Block 3 security boundary & ceiling tests
 │   ├── test_decision.py          # Block 4 scoring model & tier policy tests
-│   ├── test_decision_eval.py     # Block 4 benchmark accuracy & zero miss tests
+│   ├── test_decision_eval.py     # Block 4 dataset, split, fit, and train/holdout metrics tests
 │   ├── test_budget.py            # Block 5 multi-turn ledger & restart tests
 │   ├── test_index.py             # Block 5 symbol index, cache reuse & find_symbol tests
 │   └── test_server.py            # Block 2 MCP protocol & tool integration tests

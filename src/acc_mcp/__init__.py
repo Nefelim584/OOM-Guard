@@ -6,8 +6,14 @@ from acc_mcp.decision import (
     DecisionModel,
     DecisionResult,
     TaskIntentClassifier,
+    fit_weights,
 )
-from acc_mcp.evaluate_decision import DecisionEvaluator, EvaluationMetrics
+from acc_mcp.evaluate_decision import (
+    CalibrationResult,
+    DecisionEvaluator,
+    EvaluationMetrics,
+    stratified_split,
+)
 from acc_mcp.guard import GuardRail, SecurityViolationError
 from acc_mcp.index import SymbolLocation, WorkspaceIndex
 from acc_mcp.parser import ASTParser, SymbolInfo
@@ -33,8 +39,11 @@ __all__ = [
     "DecisionModel",
     "ContextFeatures",
     "DecisionResult",
+    "fit_weights",
     "DecisionEvaluator",
     "EvaluationMetrics",
+    "CalibrationResult",
+    "stratified_split",
     "ContextBudgetTracker",
     "RetrievalRecord",
     "WorkspaceIndex",

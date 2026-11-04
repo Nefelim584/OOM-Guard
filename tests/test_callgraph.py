@@ -269,6 +269,7 @@ def test_edited_caller_file_updates_cross_file_callers(index: WorkspaceIndex, wo
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("policy_server_model")
 async def test_tier2_lists_cross_file_callers_with_lines(workspace: Path, tmp_path: Path):
     """Verify Tier 2 shows callers in other files with path and line, and counts them in in-degree."""
     server = create_server(ledger_path=tmp_path / "ledger.json", workspace_root=workspace)
@@ -291,6 +292,7 @@ async def test_tier2_lists_cross_file_callers_with_lines(workspace: Path, tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("policy_server_model")
 async def test_tier2_separates_resolved_and_possible_callers(workspace: Path, tmp_path: Path):
     """Verify Tier 2 for Invoice.total counts the typed caller and lists the untyped one as possible."""
     server = create_server(ledger_path=tmp_path / "ledger.json", workspace_root=workspace)

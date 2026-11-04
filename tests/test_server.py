@@ -114,8 +114,14 @@ async def test_tool_get_adaptive_context_tier1(sample_source_file: Path, temp_le
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("policy_server_model")
 async def test_tool_get_adaptive_context_tier2(sample_source_file: Path, temp_ledger: Path):
-    """Verify get_adaptive_context serves Tier 2 call-graph skeleton for refactor intent."""
+    """Verify get_adaptive_context serves Tier 2 call-graph skeleton when the model picks Tier 2.
+
+    The fitted default weights (Phase 21) send this refactor intent on a class with no callers
+    to Tier 3 (P(Full) ~= 0.68 > 0.65), so the server is built with fixed weights here to test
+    the Tier 2 serving path itself.
+    """
     server = create_server(ledger_path=temp_ledger)
 
     result = await server.call_tool(

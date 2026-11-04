@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from acc_mcp.decision import DecisionModel
 from acc_mcp.guard import GuardRail
 from acc_mcp.parser import ASTParser
 from acc_mcp.tokens import HeuristicTokenCounter
@@ -130,3 +131,16 @@ def heuristic_counter() -> HeuristicTokenCounter:
 @pytest.fixture
 def default_guard(tmp_path: Path) -> GuardRail:
     return GuardRail(workspace_root=tmp_path)
+
+
+POLICY_WEIGHTS = {"w0": -2.0, "w1": 2.0, "w2": 0.2, "w3": 0.3, "w4": 1.0}
+
+
+@pytest.fixture
+def policy_server_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `create_server` use fixed weights (the pre-Phase 21 hand-picked ones).
+
+    Tests that check what a Tier 2 slice contains use this, because the fitted default
+    weights send most "trace callers" intents to Tier 3 (P(Full) just above 0.65).
+    """
+    monkeypatch.setattr("acc_mcp.server.DecisionModel", lambda: DecisionModel(**POLICY_WEIGHTS))
