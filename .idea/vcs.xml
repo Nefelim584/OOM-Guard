@@ -4,7 +4,11 @@
     <mapping directory="" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/eval/work/repos/click" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/eval/work/repos/more-itertools" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/eval/work/runs/bench1/acc/mi_constrained_batches/workspace" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/eval/work/runs/bench1/acc/mi_is_sorted/workspace" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/eval/work/runs/bench1/acc/mi_split_at/workspace" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/eval/work/runs/bench1/plain/mi_constrained_batches/workspace" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/eval/work/runs/bench1/plain/mi_is_sorted/workspace" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/eval/work/runs/bench1/plain/mi_split_at/workspace" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/eval/work/runs/run1/plain/mi_difference/workspace" vcs="Git" />
   </component>

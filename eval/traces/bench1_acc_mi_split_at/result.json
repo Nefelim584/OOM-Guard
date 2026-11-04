@@ -1,0 +1,114 @@
+{
+  "task": "mi_split_at",
+  "repo": "more-itertools",
+  "kind": "direct",
+  "mode": "acc",
+  "hint": true,
+  "context_window": 30208,
+  "session_budget": 6042,
+  "prepared_at": "2026-11-04T08:57:15",
+  "collected_at": "2026-11-04T09:20:28",
+  "notes": "...",
+  "pi": {
+    "session_files": 1,
+    "user_messages": 1,
+    "model_calls": 98,
+    "peak_context_tokens": 25230,
+    "total_prompt_tokens": 1653796,
+    "output_tokens": 25737,
+    "tool_calls": {
+      "mcp__acc_mcp__find_symbol": 1,
+      "mcp__acc_mcp__get_adaptive_context": 2,
+      "edit": 20,
+      "bash": 74
+    },
+    "tool_result_chars": {
+      "mcp__acc_mcp__find_symbol": 247,
+      "mcp__acc_mcp__get_adaptive_context": 4833,
+      "edit": 2435,
+      "bash": 40281
+    },
+    "tool_errors": 9,
+    "acc_not_served": 0,
+    "compactions": 2,
+    "error_stops": 0,
+    "minutes": 22.6,
+    "final_text": "rly detect when all splits have been made.\n\n2. Updated the logic to yield the remaining buffer plus the delimiter plus the rest of the iterator when maxsplit is exhausted, ensuring the delimiter is included in the final chunk when `keep_separator=True`.\n\nThe fix ensures that:\n- `maxsplit=0` returns `[[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]]` (no splits)\n- `maxsplit=1` returns `[[0], [2, 3, 4, 5, 6, 7, 8, 9]]` (1 split, 2 chunks)\n- `maxsplit=2` returns `[[0], [2], [4, 5, 6, 7, 8, 9]]` (2 splits, 3 chunks)"
+  },
+  "navigation": {
+    "token_counter": "chars/3.8 (one counter for both modes)",
+    "tool_classes": {
+      "code_read": {
+        "calls": 34,
+        "tokens": 3737
+      },
+      "test_run": {
+        "calls": 8,
+        "tokens": 3524
+      },
+      "edit": {
+        "calls": 20,
+        "tokens": 628
+      },
+      "acc": {
+        "calls": 3,
+        "tokens": 1336
+      },
+      "other": {
+        "calls": 32,
+        "tokens": 3304
+      }
+    },
+    "target": {
+      "file": "more_itertools/more.py",
+      "start": 1569,
+      "end": 1610
+    },
+    "navigation_calls": 37,
+    "target_edited": true,
+    "navigation_calls_before_target_edit": 2,
+    "read_windows": 15,
+    "wasted_reads": 14,
+    "large_reads": 0
+  },
+  "acc": {
+    "requests": 2,
+    "served_tiers": {
+      "1": 0,
+      "2": 0,
+      "3": 2
+    },
+    "model_tiers": {
+      "1": 0,
+      "2": 0,
+      "3": 2
+    },
+    "escalations": 0,
+    "budget_limited": 0,
+    "served_tokens": 1316,
+    "whole_file_tokens": 93694,
+    "silent_escalations": 0,
+    "tier12_slices": 0,
+    "slices_matched": true,
+    "online_miss_rate": 0.0
+  },
+  "grade": {
+    "resolved": true,
+    "edited_buggy_file": true,
+    "changed_files": [
+      "more_itertools/more.py"
+    ],
+    "touched_tests": false,
+    "target_tests": {
+      "passed": 4,
+      "failed": 0,
+      "failed_ids": [],
+      "timed_out": false
+    },
+    "full_suite": {
+      "passed": 765,
+      "failed": 0
+    },
+    "new_failures": []
+  }
+}

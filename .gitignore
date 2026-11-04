@@ -15,3 +15,7 @@ context_budget.json
 
 # Pi benchmark: cloned repos, test venv, per-run workspaces and transcripts
 eval/work/
+
+# Defence slides and speaker script (local only)
+presentation.html
+presentation_script.md

@@ -1,13 +1,13 @@
 # Adaptive Context Compressor MCP (ACC-MCP / OOM-Guard)
 
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://python.org)
-[![Tests: 268](https://img.shields.io/badge/Tests-268-brightgreen.svg)](tests)
+[![Tests: 307](https://img.shields.io/badge/Tests-307-brightgreen.svg)](tests)
 [![MCP SDK: 1.x / 2.x](https://img.shields.io/badge/MCP%20SDK-1.x%20%2F%202.x-purple.svg)](https://modelcontextprotocol.io)
 [![Target Model: Qwen3.5-4B](https://img.shields.io/badge/Target%20Model-Qwen3.5--4B-orange.svg)](https://huggingface.co/Qwen)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 > **Course:** Coding for AI & Data Science — Final Project (2026–2027)  
-> **Target Model:** Qwen3.5-4B (GGUF, served locally by `llama-server`; the exact file and quantization of the benchmark runs are recorded by `pi_bench.py freeze`)  
+> **Target Model:** Qwen3.5-4B (GGUF, served locally by `llama-server`). The trace runs used `Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf`, a community fine-tune of Qwen3.5-4B quantized to Q6_K, with ACC-MCP at commit `d52cf62`; `pi_bench.py freeze` was not run for them  
 > **Course Building Blocks:** **Block 2**, **Block 3**, **Block 4**, **Block 5**, **Block 7**, **Block 8** (the Pi benchmark in `eval/` is exploratory and not a claimed block)  
 > **Requirements Addressed:** **R1** (It Runs), **R2** (Automated Tests), **R3** (AI-Use Log), **R4** (Defence Readiness)  
 
@@ -108,7 +108,7 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
   3. `get_token_ledger()`: returns served tokens per tier and per tool, `escalation_rate`, the current session budget, the whole-file comparison as an upper bound, and the recent request history (with the line ranges each slice showed) as JSON.
   4. `reset_session()`: starts a fresh session token budget; all-time totals and history are kept.
 - **Evidence:** In-process tool tests in [`tests/test_server.py`](tests/test_server.py) (discovery, each tool, errors, `min_tier`, budget, ledger persistence across restarts).
-- **Real-agent trace:** Pi with Qwen3.5-4B called the server over stdio in run `bench1`, acc mode, task `mi_split_at`. The session file is `eval/work/runs/bench1/acc/mi_split_at/sessions/2026-11-04T07-57-30-322Z_01a1a590-2751-73f4-92b9-a0fc35a9bcf5.jsonl` (git-ignored; the measured summary is in that folder's `result.json`). The model's first two tool calls, verbatim:
+- **Real-agent trace:** Pi with Qwen3.5-4B called the server over stdio in run `bench1`, acc mode, task `mi_split_at`. The trace is committed in [`eval/traces/bench1_acc_mi_split_at/`](eval/traces/bench1_acc_mi_split_at/): Pi's session file (`2026-11-04T07-57-30-322Z_01a1a590-2751-73f4-92b9-a0fc35a9bcf5.jsonl`), the server's ledger (`acc_ledger.json`), the measured summary (`result.json`) and the model's fix (`patch.diff`). The model's first two tool calls, verbatim:
   ```text
   mcp__acc_mcp__find_symbol {"name": "split_at"}
   → {"query": "split_at", "matches": [{"file_path": "more_itertools/more.py", "symbol": "split_at",
@@ -254,8 +254,8 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
 
 | Requirement | Description | Status | Evidence |
 | :--- | :--- | :---: | :--- |
-| **R1 (It Runs)** | Runs inside a real agent (Pi) against a local `llama-server` with Qwen3.5-4B. | **VERIFIED** | Run `bench1`, acc, `mi_split_at` (session `eval/work/runs/bench1/acc/mi_split_at/sessions/2026-11-04T07-57-30-322Z_01a1a590-….jsonl`): Pi called `mcp__acc_mcp__find_symbol {"name": "split_at"}` and got `more_itertools/more.py` lines 1569-1610. It then called `get_adaptive_context` and got the verbatim Tier 3 slice `# more.py lines 1569-1610: split_at`, and the run resolved the bug. Full quote under Block 2. |
-| **R2 (Automated Tests)** | `pytest` suite for parser, call graph, guard, decision model, budget, index, server, the Block 7 intent model, the Block 8 statistics, and the benchmark's measurement code. | **VERIFIED** | 13 test files (`uv run pytest`); the passing count of the Phase 30 run goes here and in the badge (Step 30.5). |
+| **R1 (It Runs)** | Runs inside a real agent (Pi) against a local `llama-server` with Qwen3.5-4B. | **VERIFIED** | Run `bench1`, acc, `mi_split_at` (trace in [`eval/traces/bench1_acc_mi_split_at/`](eval/traces/bench1_acc_mi_split_at/); model `Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf`, ACC-MCP commit `d52cf62`): Pi called `mcp__acc_mcp__find_symbol {"name": "split_at"}` and got `more_itertools/more.py` lines 1569-1610. It then called `get_adaptive_context` and got the verbatim Tier 3 slice `# more.py lines 1569-1610: split_at`, and the run resolved the bug. Full quote under Block 2. |
+| **R2 (Automated Tests)** | `pytest` suite for parser, call graph, guard, decision model, budget, index, server, the Block 7 intent model, the Block 8 statistics, and the benchmark's measurement code. | **VERIFIED** | 307 tests in 13 test files, all passing in the Phase 30 run (`uv run pytest`). |
 | **R3 (AI-Use Log)** | Work session transcripts recorded in `ai_log/` with prompt refinements and code fixes. | **VERIFIED** | [`ai_log/AI_USE_LOG.md`](ai_log/AI_USE_LOG.md) and the session transcripts in [`ai_log/`](ai_log). |
 | **R4 (Defence Readiness)** | Modular code with one job per file. | **VERIFIED** | `parser.py`, `guard.py`, `decision.py`, `evaluate_decision.py`, `budget.py`, `index.py`, `tokens.py`, `server.py`. |
 
@@ -321,7 +321,7 @@ pi mcp list    # should show acc-mcp connected with 4 tools
 `direct` exposure declares the four tools to the model like built-in tools (`mcp__acc_mcp__get_adaptive_context`, ...). The benchmark runner writes an equivalent config into an isolated Pi config folder for each run, so no global setup is needed for `eval/`.
 
 ### 2. Register ACC-MCP as a stdio MCP server
-Any MCP client (Claude Desktop, Cursor, or Pi through its MCP adapter extension) can start the server with a config like this:
+Other MCP clients (Claude Desktop, Cursor) can start the server with a config like this:
 ```json
 {
   "mcpServers": {
@@ -381,6 +381,7 @@ OOM-Guard/
 │   ├── PROTOCOL.md               # Pi benchmark method and hypotheses H1-H3
 │   ├── tasks.json                # 10 bug-injection tasks (6 direct, 4 call-graph)
 │   ├── pi_bench.py               # Helper: freeze, prepare a run for interactive Pi, collect and report
+│   ├── traces/                   # Committed real-agent trace for R1 and Block 2 (session, ledger, result, patch)
 │   └── work/                     # (git-ignored) cloned repos, test venv, run outputs
 ├── ai_log/
 │   ├── AI_USE_LOG.md             # R3: Summary of AI work sessions, prompts & fixes

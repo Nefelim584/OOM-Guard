@@ -1,0 +1,26 @@
+diff --git a/more_itertools/more.py b/more_itertools/more.py
+index 37512ea..aed3152 100755
+--- a/more_itertools/more.py
++++ b/more_itertools/more.py
+@@ -1597,12 +1597,17 @@ def split_at(iterable, pred, maxsplit=-1, keep_separator=False):
+     it = iter(iterable)
+     for item in it:
+         if pred(item):
+-            yield buf
++            if maxsplit == 0:
++                if keep_separator:
++                    yield buf + [item] + list(it)
++                else:
++                    yield buf + [item] + list(it)
++                return
+             if keep_separator:
++                yield buf
+                 yield [item]
+-            if maxsplit == 2:
+-                yield list(it)
+-                return
++            else:
++                yield buf
+             buf = []
+             maxsplit -= 1
+         else:

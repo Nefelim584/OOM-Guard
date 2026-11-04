@@ -159,7 +159,7 @@ together with the number of navigation calls (code reading plus `find_symbol` / 
 
 ## 6. Verification and Requirements (R1–R4)
 
-* **R1 (It Runs):** Runs inside the Pi coding agent against a local `llama-server` serving Qwen3.5-4B (GGUF) on port 8080, with setup steps in `README.md`. **Verified** by the acc trace run `bench1/acc/mi_split_at`, in which Pi called `find_symbol` and `get_adaptive_context` and resolved the bug (Block 2).
-* **R2 (Automated Tests):** `pytest` suite testing AST parsing, the call graph, decision model outputs, safety gates, the session budget, the MCP tools, the Block 7 intent model, the Block 8 intervals and tests, and the benchmark's measurement code.
+* **R1 (It Runs):** Runs inside the Pi coding agent against a local `llama-server` serving Qwen3.5-4B (GGUF) on port 8080, with setup steps in `README.md`. **Verified** by the acc trace run `bench1/acc/mi_split_at` (committed in `eval/traces/bench1_acc_mi_split_at/`; model `Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf`, a community fine-tune of Qwen3.5-4B at Q6_K; ACC-MCP commit `d52cf62`), in which Pi called `find_symbol` and `get_adaptive_context` and resolved the bug (Block 2).
+* **R2 (Automated Tests):** 307 `pytest` tests in 13 files, all passing, testing AST parsing, the call graph, decision model outputs, safety gates, the session budget, the MCP tools, the Block 7 intent model, the Block 8 intervals and tests, and the benchmark's measurement code.
 * **R3 (AI-Use Log):** Work session transcripts recorded in `ai_log/` with annotations on prompts refined and manual code corrections.
 * **R4 (Defence Readiness):** Clear, modular code layout with strict separation between AST parsing (`parser.py`), decision model inference (`decision.py`), the offline intent model and uncertainty analysis (`intent_model.py`, `uncertainty.py`), guardrails (`guard.py`), budget and symbol index (`budget.py`, `index.py`), and MCP endpoints (`server.py`).
