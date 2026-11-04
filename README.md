@@ -1,13 +1,13 @@
 # Adaptive Context Compressor MCP (ACC-MCP / OOM-Guard)
 
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://python.org)
-[![Tests: 110 Passed](https://img.shields.io/badge/Tests-110%20Passed-brightgreen.svg)](https://pytest.org)
-[![Protocol: MCP 2.x](https://img.shields.io/badge/Protocol-MCP%202.x-purple.svg)](https://modelcontextprotocol.io)
+[![Tests: 219](https://img.shields.io/badge/Tests-219-brightgreen.svg)](tests)
+[![MCP SDK: 1.x / 2.x](https://img.shields.io/badge/MCP%20SDK-1.x%20%2F%202.x-purple.svg)](https://modelcontextprotocol.io)
 [![Target Model: Qwen3.5-4B](https://img.shields.io/badge/Target%20Model-Qwen3.5--4B-orange.svg)](https://huggingface.co/Qwen)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 > **Course:** Coding for AI & Data Science — Final Project (2026–2027)  
-> **Target Model:** Qwen3.5-4B (Quantized `Q4_K_M` via `llama.cpp` / Ollama / Cerebras fallback)  
+> **Target Model:** Qwen3.5-4B (`Q4_K_M` GGUF, served locally by `llama-server`)  
 > **Course Building Blocks:** **Block 2**, **Block 3**, **Block 4**, **Block 5**, **Block 9**  
 > **Requirements Addressed:** **R1** (It Runs), **R2** (Automated Tests), **R3** (AI-Use Log), **R4** (Defence Readiness)  
 
@@ -15,13 +15,11 @@
 
 ## 1. Executive Summary & Problem Formulation
 
-Local, small-scale language models like **Qwen3.5-4B** operate under constrained context budgets (typically 8,192 to 16,384 tokens on an 8 GB / 16 GB laptop). When coding agents handle real-world software repositories, their default retrieval strategy is naive: **they dump entire uncompressed source files into the context window.**
+Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project assumes 8,192 tokens). A coding agent that reads whole source files into that window fills it quickly:
+1. **Context bloat:** a full window leaves less room for the task, and an overfull request fails outright.
+2. **Token waste:** many questions (checking a signature, a type hint, or who calls a function) need only the interface, not the function bodies.
 
-This creates two critical points of failure:
-1. **Context Bloat & Out-of-Memory (OOM) Crashes:** Saturating the context window degrades reasoning accuracy, creates "lost-in-the-middle" attention degradation, and causes catastrophic context length overflow errors.
-2. **Token Waste:** More than 70% of developer queries (e.g., inspecting an API signature, checking type hints, tracing caller dependencies) require only interface boundaries, not full function implementation bodies.
-
-**Adaptive Context Compressor (ACC-MCP)** is a standalone Model Context Protocol (MCP) server that acts as an intelligent context gatekeeper. Instead of returning raw source files, an embedded **Decision Model** predicts the minimum context fidelity needed for the task and serves a pruned Abstract Syntax Tree (AST) slice. A deterministic code layer enforces strict token ceilings and security boundaries.
+**Adaptive Context Compressor (ACC-MCP)** is a Model Context Protocol (MCP) server that sits between the agent and the code. Instead of returning raw files, a **Decision Model** picks how much of a symbol to show (signatures, call graph, or full body) and serves that slice of the file. Rules written in code enforce a token ceiling, a per-session token budget, and which files may be read at all.
 
 ---
 
@@ -30,34 +28,37 @@ This creates two critical points of failure:
 ```
 ┌────────────────────────────────────────────────────────┐
 │         Agent Harness (e.g., Pi Coding Agent)          │
-│               with Qwen3.5-4B (Local)                  │
+│        with Qwen3.5-4B (local, via llama-server)       │
 └───────────────────────────┬────────────────────────────┘
-                            │ MCP Request:
-                            │ get_adaptive_context(file_path, task_intent)
+                            │ MCP tool calls (stdio):
+                            │ get_adaptive_context(file_path, task_intent,
+                            │                      symbol_name?, min_tier?)
+                            │ find_symbol · get_token_ledger · reset_session
                             ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                     ACC-MCP Server Engine (Stdio)                      │
+│                     ACC-MCP Server (src/acc_mcp/server.py)             │
 │                                                                        │
-│  1. AST Code Extractor (src/acc_mcp/parser.py)                         │
-│     Parses Python code into AST nodes, signatures, and call-graphs.    │
+│  1. Path Guard (Block 3 - guard.py)                                    │
+│     Only .py files inside the workspace root; secrets/.git rejected.   │
 │                                                                        │
-│  2. Decision Model (Block 4 - src/acc_mcp/decision.py)                 │
-│     Extracts query & AST features -> computes P(Full Context Needed).  │
-│     Selects Tier 1, 2, or 3 based on hand-picked thresholds (θ).       │
+│  2. Workspace Index (Block 5 - index.py)                               │
+│     Hash-checked symbol cache for every .py file; cross-file callers.  │
 │                                                                        │
-│  3. Hard Code Guardrail (Block 3 - src/acc_mcp/guard.py)               │
-│     - Protected Path Rule: Rejects .env, .git, credentials, alembic.   │
-│     - Hard Token Ceiling: Deterministic AST slicing (C_max <= 2,000).  │
+│  3. AST Extractor (parser.py)                                          │
+│     Signatures, call graph, complexity, verbatim bodies with lines.    │
 │                                                                        │
-│  4. Session Context Budget Tracker (Block 5 - src/acc_mcp/budget.py)   │
-│     Logs cumulative token consumption & savings in context_budget.json │
-│     Caches repository symbol map for instant cold restart recovery.    │
+│  4. Decision Model (Block 4 - decision.py)                             │
+│     Intent + AST features -> P(Full Context Needed) -> Tier 1/2/3.     │
+│     Fitted weights, hand-picked thresholds. min_tier can raise it.     │
+│                                                                        │
+│  5. Token Ceiling + Session Budget (Block 3 guard.py, Block 5 budget.py)│
+│     Slice <= min(C_max = 2,000, tokens left in session budget).        │
+│     Steps down a tier if needed; ledger saved to context_budget.json.  │
 └──────────────────────────────┬─────────────────────────────────────────┘
-                               │ Return compressed AST slice
+                               │ Slice with "# file lines a-b: symbol" headers
                                ▼
 ┌────────────────────────────────────────────────────────┐
-│             Qwen3.5-4B Generates Solution              │
-│           (From a Compressed, Bounded Context)         │
+│         Qwen3.5-4B works from the bounded slice        │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -65,24 +66,24 @@ This creates two critical points of failure:
 
 ## 3. The 3-Tier Adaptive Compression Model
 
-When context is requested, ACC-MCP dynamically compiles the target file into one of three structural tiers:
+When context is requested, ACC-MCP renders the target symbol (or the whole file) at one of three tiers:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │ Tier 1: Signatures, Types & Docstrings                                 │
-│ Omits all function and method bodies (`...`). Footprint: ~50–120 toks. │
+│ All function and method bodies replaced by `...`.                      │
 └────────────────────────────────────────────────────────────────────────┘
                                ▲
                                │ P(Full) < 0.30
 ┌────────────────────────────────────────────────────────────────────────┐
 │ Tier 2: Skeleton & Call-Graph Slice                                    │
-│ Tier 1 + direct callers, callees, exceptions. Footprint: ~200–450 toks │
+│ Tier 1 + callers (incl. other files), callees, raised exceptions.      │
 └────────────────────────────────────────────────────────────────────────┘
                                ▲
                                │ 0.30 <= P(Full) < 0.65
 ┌────────────────────────────────────────────────────────────────────────┐
 │ Tier 3: Full Implementation Body                                       │
-│ Complete uncompressed implementation of target. Footprint: 1,000–3,000 │
+│ The target copied verbatim from the file, cut to the token ceiling.    │
 └────────────────────────────────────────────────────────────────────────┘
                                ▲
                                │ P(Full) >= 0.65
@@ -98,25 +99,25 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 ## 4. Mapping to the 5 Course Building Blocks
 
 ### Block 2: Your Own MCP Server (`src/acc_mcp/server.py`)
-- **Implementation:** Built using the standard Python `mcp` SDK with forward-compatibility across MCP 1.x and 2.x (`MCPServer` / `FastMCP`) via stdio transport.
+- **Implementation:** Built on the Python `mcp` SDK over stdio. It imports `MCPServer` (SDK 2.x) and falls back to `FastMCP` (SDK 1.x); `uv.lock` pins `mcp` 2.3.0.
 - **Exposed Tools:**
-  1. `get_adaptive_context(file_path: str, task_intent: str, symbol_name: str | None = None)`: Executes the intent classifier and decision model, retrieves the optimal AST slice, enforces security guardrails, and records audit tokens.
-  2. `find_symbol(name: str)`: Finds where a class, function, or method is defined anywhere in the workspace, returning file path (relative to the workspace root), qualified name, kind, and line range as JSON.
-  3. `get_token_ledger()`: Returns the cumulative session token audit log and savings ledger in JSON format.
-- **Evidence:** Tested with 8 integration tests in [`tests/test_server.py`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/tests/test_server.py) verifying protocol discovery, tool invocation, error handling, and state persistence across server restarts.
+  1. `get_adaptive_context(file_path, task_intent, symbol_name=None, min_tier=None)`: checks the path, runs the decision model, and returns the slice. `min_tier` (1–3) lets the agent ask for more context when a slice was not enough; it can raise the model's tier but never lower it. Each request is recorded in the ledger.
+  2. `find_symbol(name)`: finds where a class, function, or method is defined anywhere in the workspace and returns file path (relative to the workspace root), qualified name, kind, and line range as JSON (at most 50 matches).
+  3. `get_token_ledger()`: returns all-time totals, `escalation_rate`, the current session budget, and the recent request history as JSON.
+  4. `reset_session()`: starts a fresh session token budget; all-time totals and history are kept.
+- **Evidence:** In-process tool tests in [`tests/test_server.py`](tests/test_server.py) (discovery, each tool, errors, `min_tier`, budget, ledger persistence across restarts). No test yet starts the server as a subprocess or drives it from a real agent; that is planned in Phase 14.
 
 ### Block 3: A Rule Enforced in Code (`src/acc_mcp/guard.py`)
-- **Implementation:** A deterministic safety guardrail implemented in Python before context generation or write operations.
+- **Implementation:** Deterministic checks in Python that run before any code is read or served.
 - **Enforced Rules:**
   1. *Protected Path Rule:* Only `.py` files inside the workspace root (`ACC_MCP_ROOT`, default: the server's working directory) are served. The check runs on both the path as sent and its real path after symlinks are followed, so `notes.py -> .env` is rejected. Anything else raises `SecurityViolationError`:
      - Paths outside the root: absolute paths elsewhere, `../` traversal, symlinks that leave the root
      - Non-Python files: `README.md`, `config.yaml`, `*.pyc`
      - Environment configs: `.env`, `.env.local`, `.env.production`
-     - Version control metadata: `.git/`
-     - Secrets and keys: `credentials.json`, `secrets.json`, `.ssh/`, `.aws/`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, `.pypirc`
-     - Database migrations: `alembic/migrations/`
-  2. *Hard Context Ceiling ($C_{\max} = 2{,}000$ tokens):* Under no circumstances can any generated context slice exceed 2,000 tokens. If context exceeds $C_{\max}$, it is truncated **deterministically by AST node slicing in code, not by LLM prompting.** Slices cleanly at statement and function boundaries, appending `...` while guaranteeing valid Python syntax.
-- **Evidence:** Tested with 39 automated tests in [`tests/test_guard.py`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/tests/test_guard.py).
+     - Version control metadata: anything under `.git/`
+     - Secrets and keys: `credentials.json`, `secrets.json`, anything under `.ssh/` or `.aws/`, `*.pem`, `*.key`, `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, `.npmrc`, `.pypirc`, `.netrc`
+  2. *Hard Context Ceiling ($C_{\max} = 2{,}000$ tokens):* no slice is returned above the ceiling, as measured by the server's token counter (`tiktoken` `cl100k_base`, or a characters/3.8 estimate if `tiktoken` is unavailable; this is not Qwen's own tokenizer). Tier 3 is cut by the parser at statement boundaries with an "omitted lines" note. `GuardRail.enforce_ceiling` then checks every slice; if one is still too long, it keeps whole top-level statements that fit (re-rendered from the AST, so comments are lost on that path) and adds a `# [ACC-MCP] Context truncated` banner. No LLM is involved in cutting.
+- **Evidence:** [`tests/test_guard.py`](tests/test_guard.py), plus the cut-slice tests in [`tests/test_parser_verbatim.py`](tests/test_parser_verbatim.py).
 
 ### Block 4: A Decision Model (`src/acc_mcp/decision.py` & `evaluate_decision.py`)
 - **Feature Vector:** $(x_1, x_2, x_3, x_4)$ where:
@@ -149,18 +150,32 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 - **Limits of this measurement:** the labels and intents were written by the project author, not collected from users. Train and holdout tasks can share a code snippet, so $x_2$–$x_4$ values are not fully unseen. Only 2 intents are real (from the server ledger); real Pi intents will be added once the Phase 14 runs exist.
 - The real-world signal is `escalation_rate` in `get_token_ledger`: the share of requests where the agent had to raise `min_tier` above the model's choice because the slice it got was not enough.
 
-### Block 5: Memory or Context Budget Management (`src/acc_mcp/budget.py`)
-- **Implementation:** An active context budget manager persisting state across agent runs.
-- **Mechanisms:**
-  - Tracks per-query token consumption and relative token savings:
-    $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{\text{Served Tier}}}{\text{Tokens}_{\text{Full File}}} \times 100\%$$
-  - Persists multi-turn ledger and session summaries to `context_budget.json`.
-  - **Workspace Symbol Index (`src/acc_mcp/index.py`):** Walks every servable `.py` file under the workspace root (skipping `.venv`, `venv`, `.git`, `__pycache__`, `node_modules`) and stores each file's symbol map (names, line ranges, complexities, callers, callees, raised exceptions) in the ledger. Each file's SHA-256 is compared with the cached `file_hash`: unchanged files are reused, changed files are re-parsed, deleted files are dropped.
-  - **Cold Restart Test:** After a restart, the index is rebuilt from the ledger and unchanged files are not parsed again (the tests count parser calls). The file served by `get_adaptive_context` is still parsed on each request, because slices are cut from its AST.
-- **Evidence:** Tested in [`tests/test_budget.py`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/tests/test_budget.py) and [`tests/test_index.py`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/tests/test_index.py).
+### Block 5: Memory or Context Budget Management (`src/acc_mcp/budget.py`, `src/acc_mcp/index.py`)
+- **Session Budget:** All slices in a session share a token budget (`ACC_MCP_SESSION_BUDGET`, default 6,000 tokens). Each slice is cut to $\min(C_{\max}, \text{tokens left})$. If the chosen tier does not fit, the server serves one tier lower and says so in a `# [ACC-MCP] Served Tier n instead of Tier m` note; a tier forced with `min_tier` that does not fit is refused with a `# [ACC-MCP] Not served` message. `reset_session` starts a new budget.
+- **Ledger:** Every request is recorded with its served tier, model tier, `min_tier`, and token counts. Savings per request are measured against reading the whole file:
+  $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{\text{Served Tier}}}{\text{Tokens}_{\text{Full File}}} \times 100\%$$
+  The ledger is saved once per request to the file named by `ACC_MCP_LEDGER`, or to `context_budget.json` in the server's working directory. Totals cover all requests; the history keeps only the last 200 records.
+- **Workspace Symbol Index (`index.py`):** Walks every servable `.py` file under the workspace root (skipping `.venv`, `venv`, `.git`, `__pycache__`, `node_modules`) and stores each file's symbol map (names, line ranges, complexities, callers, callees, raised exceptions) in the ledger. Each file's SHA-256 is compared with the cached `file_hash`: unchanged files are reused, changed files are re-parsed, deleted files are dropped.
+- **Cold Restart Test:** After a restart, the index is rebuilt from the ledger and unchanged files are not parsed again (the tests count parser calls). The file served by `get_adaptive_context` is still parsed on each request, because slices are cut from its AST.
+- **Evidence:** [`tests/test_budget.py`](tests/test_budget.py), [`tests/test_index.py`](tests/test_index.py), and the budget tests in [`tests/test_server.py`](tests/test_server.py).
 
 ### Block 9: A Measured Comparison (Manual Evaluation with Pi)
-- **Status:** Evaluation is done manually with the Pi coding agent (plain Pi vs Pi + ACC-MCP) on real Python tasks that come with tests. The protocol and results will live in `eval/` (see Phase 14 in `todo.md`).
+- **Question:** does ACC-MCP change whether a small local model fixes a bug in real code, and how much context it uses, when the model works inside a real coding agent (Pi)? The full method is in [`eval/PROTOCOL.md`](eval/PROTOCOL.md).
+- **Why our own benchmark:** SWE-bench's grader needs a Docker image of several GB per task; Exercism-style exercises are single small files where ACC-MCP has nothing to save; HumanEval/MBPP have no repository at all. The benchmark instead injects bugs into real libraries (the SWE-smith approach) and grades them with the libraries' own tests, without Docker.
+- **Repositories:**
+
+  | Repo | Pinned release | Files with injected bugs | Why |
+  | :--- | :--- | :--- | :--- |
+  | [more-itertools](https://github.com/more-itertools/more-itertools) | `v11.2.1` | `more_itertools/more.py` (5,644 lines, ~175 KB) | One file of ~45K tokens, larger than the model's ~30K window, so the agent must find the right function. |
+  | [click](https://github.com/pallets/click) | `8.5.0` | `src/click/core.py` (3,799 lines), `types.py`, `parser.py`, `formatting.py` | Classes and methods spread over modules, so callers and callees matter. |
+
+- **Tasks (5 per repo):** each changes one line or condition in one function that has its own tests: `split_at`, `numeric_range.index`, `difference`, `is_sorted`, `constrained_batches` (more-itertools); argument unpacking, `IntRange` minimum, eager-parameter order, `nargs=-1` envvar splitting, `--help` column layout (click). The agent gets only a user-style bug report, never the file or line, in a fresh repo whose only commit already contains the bug. Each change, its target tests and its report are listed in the protocol.
+- **How a run is done:** by hand, in normal interactive Pi. For each task and mode, `prepare` builds the broken repo and a `start.sh` that opens Pi with an isolated configuration; the operator pastes the bug report, watches the model work under fixed operator rules (no hints; only "Proceed as you think best." / "Continue."), and quits when it is done or stuck. `collect` then reads Pi's own session file for the measurements and runs the repo's tests to check the fix.
+- **Conditions:** every task is done twice with the same model, prompt, tools, compaction settings, operator rules and time limit. Only the acc run adds the ACC-MCP server (tools declared directly) and one sentence telling the model to prefer it for reading code.
+- **Grading:** after restoring the original tests, a task is resolved when the target tests pass and the full suite has no failures beyond those of the clean repo.
+- **Measured per run:** resolved or not, peak context of one model call, total prompt tokens, model calls, output tokens, tools used, compactions, wall time, and (with ACC-MCP) tiers served, `min_tier` escalations and budget step-downs.
+- **Helper script:** [`eval/pi_bench.py`](eval/pi_bench.py) (`setup`, `validate`, `doctor`, `prepare`, `collect`, `list`, `report`). It never drives Pi itself.
+- **Status: not run yet.** Results will go to `eval/results.md`; until then this README makes no claim about token savings or task success.
 - An earlier simulated benchmark was removed: it marked every gated run as a success without checking the model's answer, and one generated file produced most of its reported saving.
 
 ---
@@ -169,10 +184,10 @@ When context is requested, ACC-MCP dynamically compiles the target file into one
 
 | Requirement | Description | Status | Evidence |
 | :--- | :--- | :---: | :--- |
-| **R1 (It Runs)** | Runs locally against `llama-server` (Qwen3.5-4B) or Ollama/Cerebras fallback. | **PENDING** | Stdio MCP server (`src/acc_mcp/server.py`), local setup guide below; real-agent (Pi) setup in Phase 14. |
-| **R2 (Automated Tests)** | Comprehensive `pytest` suite testing parser, decision model, guardrails, and server. | **VERIFIED** | **110 passing tests** across 8 test suites running in ~1.0 second. |
-| **R3 (AI-Use Log)** | Work session transcripts recorded in `ai_log/` with prompt refinements and code fixes. | **VERIFIED** | Full chronology & annotations in [`ai_log/AI_USE_LOG.md`](file:///Users/nefelim584/PycharmProjects/OOM-Guard/ai_log/AI_USE_LOG.md). |
-| **R4 (Defence Readiness)** | Clean, modular code layout with strict separation of concerns. | **VERIFIED** | Clean package layout: `parser.py`, `guard.py`, `decision.py`, `budget.py`, `server.py`. |
+| **R1 (It Runs)** | Runs inside a real agent (Pi) against a local `llama-server` with Qwen3.5-4B. | **PENDING** | The stdio server starts with `python -m acc_mcp.server`; the Pi setup and a real run are Phase 14. |
+| **R2 (Automated Tests)** | `pytest` suite for parser, call graph, guard, decision model, budget, index, and server. | **VERIFIED** | 219 tests in 10 test files (`uv run pytest`). |
+| **R3 (AI-Use Log)** | Work session transcripts recorded in `ai_log/` with prompt refinements and code fixes. | **VERIFIED** | [`ai_log/AI_USE_LOG.md`](ai_log/AI_USE_LOG.md) and the session transcripts in [`ai_log/`](ai_log). |
+| **R4 (Defence Readiness)** | Modular code with one job per file. | **VERIFIED** | `parser.py`, `guard.py`, `decision.py`, `evaluate_decision.py`, `budget.py`, `index.py`, `tokens.py`, `server.py`. |
 
 ---
 
@@ -198,7 +213,6 @@ pip install -e ".[dev]"
 
 ### 2. Running the Automated Test Suite (R2)
 ```bash
-# Run full 110-test suite via uv
 uv run pytest
 
 # Or directly via python3
@@ -208,43 +222,52 @@ python3 -m pytest
 ### 3. Fitting and Evaluating the Decision Model (Block 4)
 ```bash
 # Fits the weights on the train split and prints train and holdout metrics separately
-python3 src/acc_mcp/evaluate_decision.py
+uv run python src/acc_mcp/evaluate_decision.py
 ```
 
 ---
 
-## 7. Connecting ACC-MCP to Your Agent or IDE (R1)
+## 7. Connecting ACC-MCP to an Agent (R1)
 
-### Option A: Running against Local `llama-server` (`llama.cpp`)
-1. Download quantized Qwen3.5-4B GGUF:
-   ```bash
-   huggingface-cli download Qwen/Qwen2.5-Coder-3B-Instruct-GGUF qwen2.5-coder-3b-instruct-q4_k_m.gguf --local-dir ./models
-   ```
-2. Start `llama-server` on port 8080:
-   ```bash
-   ./llama-server -m ./models/qwen2.5-coder-3b-instruct-q4_k_m.gguf -c 8192 --port 8080
-   ```
-3. Point an MCP-capable coding agent at that endpoint and register ACC-MCP as a stdio server (see Option C). Step-by-step Pi coding agent setup is added in Phase 14.
-
-### Option B: Running against `Ollama`
+### 1. Serve Qwen3.5-4B with `llama-server` (`llama.cpp`)
 ```bash
-ollama run qwen2.5-coder:3b
-```
-Then register ACC-MCP with your agent as in Option C.
+# With a GGUF you already have
+llama-server -m /path/to/Qwen3.5-4B-Q4_K_M.gguf -c 8192 --port 8080
 
-### Option C: Configuring in Claude Desktop / Cursor / Antigravity IDE (Stdio MCP)
-Add ACC-MCP to your MCP settings file (`claude_desktop_config.json` or `mcp_servers.json`):
+# Or let llama.cpp fetch it from Hugging Face
+llama-server -hf unsloth/Qwen3.5-4B-GGUF:Q4_K_M -c 8192 --port 8080
+```
+This gives an OpenAI-compatible endpoint at `http://127.0.0.1:8080/v1`.
+
+### Pi coding agent
+Pi (1.0.2+) has built-in MCP support. Register ACC-MCP for the project the agent works on:
+```bash
+cd /path/to/the/project
+pi mcp add acc-mcp --exposure direct \
+  --env ACC_MCP_ROOT="$PWD" --env ACC_MCP_LEDGER=/tmp/acc_ledger.json \
+  -- /path/to/OOM-Guard/.venv/bin/python -m acc_mcp.server
+pi mcp list    # should show acc-mcp connected with 4 tools
+```
+`direct` exposure declares the four tools to the model like built-in tools (`mcp__acc_mcp__get_adaptive_context`, ...). The benchmark runner writes an equivalent config into an isolated Pi config folder for each run, so no global setup is needed for `eval/`.
+
+### 2. Register ACC-MCP as a stdio MCP server
+Any MCP client (Claude Desktop, Cursor, or Pi through its MCP adapter extension) can start the server with a config like this:
 ```json
 {
   "mcpServers": {
     "acc-mcp": {
-      "command": "python3",
-      "args": ["-m", "acc_mcp.server"],
-      "cwd": "/path/to/OOM-Guard"
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/OOM-Guard", "python", "-m", "acc_mcp.server"],
+      "env": {
+        "ACC_MCP_ROOT": "/path/to/the/project/the/agent/works/on",
+        "ACC_MCP_SESSION_BUDGET": "6000"
+      }
     }
   }
 }
 ```
+- `ACC_MCP_ROOT` is the only folder whose `.py` files are served; relative `file_path` values are resolved against it.
+- The ledger is written to `ACC_MCP_LEDGER` if set, otherwise to `context_budget.json` in the server's working directory (here `/path/to/OOM-Guard`).
 
 ---
 
@@ -255,31 +278,43 @@ OOM-Guard/
 ├── src/
 │   └── acc_mcp/
 │       ├── __init__.py           # Package exports
-│       ├── parser.py             # AST parsing, CC calculator, Tier 1/2/3 extraction
-│       ├── tokens.py             # Pluggable token counter (Endpoint & Heuristic)
-│       ├── guard.py              # Block 3: Security path rules & AST ceiling slicing
-│       ├── decision.py           # Block 4: Intent classifier & logistic scoring
+│       ├── parser.py             # AST parsing, complexity, call graph, Tier 1/2/3 slices
+│       ├── tokens.py             # Pluggable token counter (llama-server/Ollama endpoint, tiktoken fallback)
+│       ├── guard.py              # Block 3: Workspace/path rules & token ceiling
+│       ├── decision.py           # Block 4: Intent classifier, logistic scoring, weight fitting
 │       ├── evaluate_decision.py  # Block 4: Train/holdout split, weight fit, and report
-│       ├── budget.py             # Block 5: Token ledger & restart recovery cache
+│       ├── budget.py             # Block 5: Session budget, token ledger & symbol cache
 │       ├── index.py              # Block 5: Workspace symbol index (hash-checked cache)
-│       └── server.py             # Block 2: Stdio MCP Server (get_adaptive_context)
+│       └── server.py             # Block 2: Stdio MCP server and its four tools
 ├── data/
-│   └── decision_dataset.json     # 20 ground-truth coding benchmark tasks
+│   └── decision_dataset.json     # 100 labeled task intents for the decision model
 ├── tests/
+│   ├── conftest.py               # Shared fixtures
 │   ├── test_parser_tier1.py      # Tier 1 AST interface tests
 │   ├── test_parser_tier2.py      # Tier 2 call-graph & complexity tests
+│   ├── test_parser_verbatim.py   # Verbatim Tier 3, line headers, and cut-slice notes
 │   ├── test_callgraph.py         # Cross-file, import-aware call graph tests
-│   ├── test_guard.py             # Block 3 security boundary & ceiling tests
-│   ├── test_decision.py          # Block 4 scoring model & tier policy tests
+│   ├── test_guard.py             # Block 3 path rules & ceiling tests
+│   ├── test_decision.py          # Block 4 classifier, scoring, fitting & tier policy tests
 │   ├── test_decision_eval.py     # Block 4 dataset, split, fit, and train/holdout metrics tests
-│   ├── test_budget.py            # Block 5 multi-turn ledger & restart tests
+│   ├── test_budget.py            # Block 5 ledger, session budget & restart tests
 │   ├── test_index.py             # Block 5 symbol index, cache reuse & find_symbol tests
-│   └── test_server.py            # Block 2 MCP protocol & tool integration tests
+│   └── test_server.py            # Block 2 MCP tool tests
+├── eval/
+│   ├── PROTOCOL.md               # Block 9: Pi benchmark method
+│   ├── tasks.json                # 10 bug-injection tasks (more-itertools, click)
+│   ├── pi_bench.py               # Helper: prepare a run for interactive Pi, collect its measurements
+│   └── work/                     # (git-ignored) cloned repos, test venv, run outputs
 ├── ai_log/
-│   └── AI_USE_LOG.md             # R3: Complete transcript of AI prompts & fixes
+│   ├── AI_USE_LOG.md             # R3: Summary of AI work sessions, prompts & fixes
+│   └── *.md                      # Exported session transcripts
+├── AGENTS.md                     # Instructions for AI coding agents working on this repo
+├── Description.md                # Project proposal / formal description
+├── LICENSE                       # MIT License
+├── main.py                       # Placeholder entry point (not used by the server)
 ├── pyproject.toml                # Project metadata & pytest configuration
-├── todo.md                       # 10-phase project implementation roadmap
-└── README.md                     # Comprehensive project documentation
+├── todo.md                       # 22-phase implementation plan
+└── README.md                     # This document
 ```
 
 ---

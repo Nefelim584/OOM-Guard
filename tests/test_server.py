@@ -199,10 +199,13 @@ async def test_tool_get_token_ledger_audit_log(sample_source_file: Path, temp_le
 
     summary = updated_data["summary"]
     assert summary["total_requests"] == 1
-    assert summary["cumulative_baseline_tokens"] > 0
+    assert summary["whole_file_tokens"] > 0
     assert summary["cumulative_served_tokens"] > 0
-    assert summary["cumulative_tokens_saved"] > 0
-    assert summary["overall_savings_percentage"] > 0.0
+    assert summary["upper_bound_savings_pct"] > 0.0
+    assert summary["served_tokens_by_tool"]["get_adaptive_context"] == {
+        "requests": 1,
+        "served_tokens": summary["cumulative_served_tokens"],
+    }
 
     assert len(updated_data["history"]) == 1
     record = updated_data["history"][0]
@@ -654,3 +657,105 @@ async def test_ledger_saved_once_per_request(
     restarted = create_server(ledger_path=temp_ledger)
     assert restarted.budget_tracker.total_requests == 2
     assert restarted.budget_tracker.is_file_cached(str(sample_source_file.resolve()))
+
+
+# ---------------------------------------------------------------------------
+# 8. Honest Ledger Accounting: Line Ranges and Per-Tool Tokens (Steps 23.2 - 23.4)
+# ---------------------------------------------------------------------------
+
+
+async def served_ranges(server, file_path: Path, **args) -> tuple[str, list[tuple[str, int, int]]]:
+    """Request a slice; return its text and the (symbol, start, end) ranges stored in the ledger."""
+    result = await server.call_tool("get_adaptive_context", {"file_path": str(file_path), **args})
+    record = json.loads((await server.call_tool("get_token_ledger", {})).content[0].text)["history"][-1]
+    assert {r["file"] for r in record["line_ranges"]} <= {record["file_path"]}
+    return result.content[0].text, [(r["symbol"], r["start"], r["end"]) for r in record["line_ranges"]]
+
+
+@pytest.mark.asyncio
+async def test_line_ranges_stored_for_each_tier(sample_source_file: Path, temp_ledger: Path):
+    """Verify the ledger stores the line ranges shown in Tier 1, 2 and 3 slices (lines counted by hand)."""
+    server = create_server(ledger_path=temp_ledger)
+    inspect = {
+        "task_intent": "Inspect the UserManager authenticate signature",
+        "symbol_name": "UserManager.authenticate",
+    }
+
+    _, tier1 = await served_ranges(server, sample_source_file, **inspect)
+    assert server.budget_tracker.history[-1].served_tier == 1
+    assert tier1 == [("UserManager", 5, 22), ("UserManager.authenticate", 13, 18)]
+
+    _, tier2 = await served_ranges(server, sample_source_file, **inspect, min_tier=2)
+    assert server.budget_tracker.history[-1].served_tier == 2
+    assert tier2 == [("UserManager", 5, 22), ("UserManager.authenticate", 13, 18)]
+
+    _, tier3 = await served_ranges(server, sample_source_file, **inspect, min_tier=3)
+    assert server.budget_tracker.history[-1].served_tier == 3
+    assert tier3 == [
+        ("imports", 3, 3),
+        ("UserManager (class header)", 5, 6),
+        ("UserManager.authenticate", 13, 18),
+    ]
+
+    _, function = await served_ranges(
+        server, sample_source_file, task_intent="Check calculate_hash signature", symbol_name="calculate_hash"
+    )
+    assert server.budget_tracker.history[-1].served_tier == 1
+    assert function == [("calculate_hash", 25, 27)]
+
+
+@pytest.mark.asyncio
+async def test_line_ranges_of_ceiling_cut_slice_end_at_the_cut(long_function_file: Path, temp_ledger: Path):
+    """Verify a Tier 3 slice cut by the token ceiling stores only the lines it really shows."""
+    server = create_server(ledger_path=temp_ledger, max_tokens=300)
+
+    text, ranges = await served_ranges(server, long_function_file, **REWRITE_ARGS)
+
+    assert server.budget_tracker.history[-1].served_tier == 3
+    assert len(ranges) == 1
+    symbol, start, end = ranges[0]
+    assert (symbol, start) == ("long_routine", 1)
+    assert 3 <= end < 64  # long_routine spans lines 1-64
+    assert text.startswith(f"# long_routine.py lines 1-{end}: long_routine\n")
+    assert f"lines {end + 1}-64 omitted to fit the 300-token ceiling" in text
+
+
+@pytest.mark.asyncio
+async def test_find_symbol_output_counted_per_tool(
+    sample_source_file: Path, temp_ledger: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Verify find_symbol output is counted per tool, saved once, and kept out of history and the session budget."""
+    server = create_server(ledger_path=temp_ledger)
+    tracker = server.budget_tracker
+    saves: list[Path | None] = []
+    real_save = tracker.save_ledger
+
+    def counting_save(target_path=None):
+        saves.append(target_path)
+        real_save(target_path)
+
+    monkeypatch.setattr(tracker, "save_ledger", counting_save)
+
+    lookup = (await server.call_tool("find_symbol", {"name": "authenticate"})).content[0].text
+    assert len(saves) == 1
+    await server.call_tool(
+        "get_adaptive_context",
+        {
+            "file_path": str(sample_source_file),
+            "task_intent": "Check calculate_hash signature",
+            "symbol_name": "calculate_hash",
+        },
+    )
+
+    summary = json.loads((await server.call_tool("get_token_ledger", {})).content[0].text)["summary"]
+    slice_tokens = tracker.history[-1].served_tokens
+    assert summary["served_tokens_by_tool"] == {
+        "get_adaptive_context": {"requests": 1, "served_tokens": slice_tokens},
+        "find_symbol": {"requests": 1, "served_tokens": tracker.token_counter.count_tokens(lookup)},
+    }
+    assert summary["served_tokens_by_tier"] == {"1": slice_tokens, "2": 0, "3": 0}
+    assert summary["total_requests"] == 1
+    assert summary["session_served_tokens"] == slice_tokens
+
+    restarted = create_server(ledger_path=temp_ledger)
+    assert restarted.budget_tracker.served_tokens_by_tool["find_symbol"]["requests"] == 1

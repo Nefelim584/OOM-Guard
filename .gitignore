@@ -12,3 +12,6 @@ wheels/
 # Runtime session files
 context_budget.json
 *.tmp
+
+# Pi benchmark: cloned repos, test venv, per-run workspaces and transcripts
+eval/work/

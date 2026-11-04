@@ -2,5 +2,7 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/eval/work/repos/click" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/eval/work/repos/more-itertools" vcs="Git" />
   </component>
 </project>

@@ -1,15 +1,15 @@
 # Adaptive Context Compressor MCP (ACC-MCP)
 **Course:** Coding for AI & Data Science — Final Project (2026–2027)  
-**Target Model:** Qwen3.5-4B (Quantized Q4_K_M via `llama.cpp` / Ollama)  
+**Target Model:** Qwen3.5-4B (Quantized Q4_K_M GGUF via `llama-server`)  
 **Selected Building Blocks:** Block 2, Block 3, Block 4, Block 5, Block 9  
 
 ---
 
 ## 1. Executive Summary & Motivation
 
-Local, small-scale language models like **Qwen3.5-4B** operate under constrained context budgets (typically 8,192 to 16,384 tokens on an 8 GB laptop). When coding agents handle multi-file codebases, their default retrieval strategy is naive: they inject entire target files into the context window. This creates two immediate points of failure:
-1. **Context Bloat & Degradation:** Saturating the context window degrades reasoning accuracy, increases latency, and risks outright out-of-memory (OOM) failures.
-2. **Token Waste:** More than 70% of typical developer queries (e.g., verifying a function signature, finding call sites, checking return types) require only interface boundaries, not full function bodies.
+Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project assumes 8,192 tokens). When coding agents handle multi-file codebases, they often read entire files into that window. This creates two problems:
+1. **Context Bloat:** a full window leaves less room for the task, and an overfull request fails outright.
+2. **Token Waste:** many questions (verifying a function signature, finding call sites, checking return types) need only the interface, not the function bodies.
 
 **Adaptive Context Compressor (ACC-MCP)** is a standalone Model Context Protocol (MCP) server that acts as an intelligent token-budget gatekeeper. Instead of returning raw source files, an embedded **Decision Model** predicts the minimum context fidelity needed for a specific task and serves a pruned AST (Abstract Syntax Tree) slice. A deterministic code layer enforces strict token ceilings and file security boundaries.
 
@@ -36,17 +36,17 @@ Local, small-scale language models like **Qwen3.5-4B** operate under constrained
 │     Selects Tier 1, 2, or 3 based on decision threshold θ.             │
 │                                                                        │
 │  3. Hard Code Guardrail (Block 3)                                      │
-│     - Drops blacklisted files (.env, credentials, migrations).         │
-│     - Truncates output to a hard token ceiling (e.g., 2,000 tokens).   │
+│     - Serves only .py files inside the workspace; secrets rejected.    │
+│     - Cuts output to a hard token ceiling (2,000 tokens).              │
 │                                                                        │
 │  4. Session Context Budget Tracker (Block 5)                           │
-│     Logs cumulative token consumption and savings vs. baseline.        │
+│     Per-session token budget, ledger, and cached symbol index.         │
 └──────────────────────────────┬─────────────────────────────────────────┘
                                │ Return compressed AST slice
                                ▼
    ┌────────────────────────────────────────────────────────┐
    │             Qwen3.5-4B Generates Solution              │
-   │            (Using 60–85% Fewer Prompt Tokens)          │
+   │          (From a Compressed, Bounded Context)          │
    └────────────────────────────────────────────────────────┘
 ```
 
@@ -57,14 +57,11 @@ Local, small-scale language models like **Qwen3.5-4B** operate under constrained
 When context is requested, the system compiles the code into one of three structural tiers:
 
 1. **Tier 1 (Signatures & Types):**  
-   Exports module structure, class definitions, function signatures, docstrings, and type hints. Omits all function bodies (`...`).  
-   *Token footprint: ~50–120 tokens.*
+   Exports module structure, class definitions, function signatures, docstrings, and type hints. Omits all function bodies (`...`).
 2. **Tier 2 (Skeleton & Call-Graph Slice):**  
-   Exports Tier 1 plus direct callers, callees, and raised exceptions for the target symbol.  
-   *Token footprint: ~200–450 tokens.*
+   Exports Tier 1 plus direct callers (including callers in other workspace files), callees, and raised exceptions for the target symbol.
 3. **Tier 3 (Full Implementation Body):**  
-   Exports the complete uncompressed source code for the requested symbol and its immediate block.  
-   *Token footprint: 1,000–3,000+ tokens.*
+   Exports the source of the requested symbol verbatim from the file, with line numbers, cut to the 2,000-token ceiling.
 
 ---
 
@@ -87,7 +84,7 @@ The probability $P(\text{Full Context Needed})$ is calculated as:
 $$P(\text{Full}) = \frac{1}{1 + e^{-z}}$$
 
 ### 4.3 Decision Policy & Thresholds
-With calibrated thresholds $\theta_{\text{low}} = 0.30$ and $\theta_{\text{high}} = 0.65$:
+With hand-picked thresholds $\theta_{\text{low}} = 0.30$ and $\theta_{\text{high}} = 0.65$ (the weights $w_0 \dots w_4$ are fitted on training data, see Block 4):
 
 $$\text{Tier}(P) = \begin{cases} 
 \text{Tier 1 (Signatures Only)}, & \text{if } P(\text{Full}) < \theta_{\text{low}} \\
@@ -107,41 +104,48 @@ $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{
 ### Block 2: Your Own MCP Server
 * **Implementation:** Built using the standard Python `mcp` SDK via stdio transport.
 * **Exposed Tools:**
-  * `get_adaptive_context(file_path: str, task_intent: str, symbol_name: str | None)`: Runs the decision model and returns the optimal AST slice.
-  * `get_token_ledger()`: Returns the cumulative token audit log for the current session.
-* **Evidence:** Integration tests in `tests/test_server.py`; a real agent session trace comes from the Pi runs in Phase 14.
+  * `get_adaptive_context(file_path: str, task_intent: str, symbol_name: str | None, min_tier: int | None)`: Runs the decision model and returns the slice; `min_tier` lets the agent ask for a higher tier when a slice was not enough.
+  * `find_symbol(name: str)`: Finds where a class, function, or method is defined in the workspace.
+  * `get_token_ledger()`: Returns token totals, `escalation_rate`, the session budget, and recent history.
+  * `reset_session()`: Starts a fresh session token budget for a new task.
+* **Evidence:** Tool tests in `tests/test_server.py`; a real agent session trace comes from the Pi runs in Phase 14.
 
 ### Block 3: A Rule Enforced in Code
-* **Implementation:** A deterministic safety guardrail implemented in Python before context generation or write operations.
+* **Implementation:** A deterministic safety guardrail implemented in Python before any code is read or served.
 * **Enforced Rules:**
-  1. *Protected Path Rule:* Immediate rejection (`SecurityViolationError`) if a query targets protected files (`.env`, `.git/`, `credentials.json`, `alembic/migrations/`).
-  2. *Hard Context Ceiling:* Under no circumstances can any generated context slice exceed $C_{\max} = 2{,}000$ tokens. If Tier 3 exceeds $C_{\max}$, it is truncated deterministically by AST node slicing, not by LLM prompting.
-* **Evidence:** Automated test suite attempting to request context for `.env` and oversized files, verifying that the system rejects the operation via code exceptions.
+  1. *Protected Path Rule:* Only `.py` files inside the workspace root are served, checked on the real path after symlinks; anything else (e.g. `.env`, `.git/`, `credentials.json`, `*.pem`, `../` traversal) raises `SecurityViolationError`.
+  2. *Hard Context Ceiling:* No slice is returned above $C_{\max} = 2{,}000$ tokens (as counted by the server's token counter). Oversized slices are cut deterministically at statement boundaries, not by LLM prompting.
+* **Evidence:** `tests/test_guard.py` requests `.env`, paths outside the workspace, symlinks, and oversized files, and checks that they are rejected or cut in code.
 
 ### Block 4: A Decision Model
-* **Implementation:** A calibrated classifier trained or fitted to predict whether code tasks require full bodies versus signatures.
-* **Evaluation:** Tested across a labeled ground-truth dataset of at least **20 distinct coding tasks** (10 interface-only tasks, 10 deep logic rewrite tasks).
-* **Metrics:** Documented confusion matrix, false alarm rate (allocating full context when signatures sufficed), and miss rate (allocating signatures when full bodies were required).
+* **Implementation:** A logistic model whose weights are fitted by gradient descent on a train split; the thresholds are hand-picked.
+* **Evaluation:** 100 labeled task intents (29 Tier 1, 31 Tier 2, 40 Tier 3), split 70/30 by tier. Results are reported separately for train and for the 30-task holdout the fit never saw.
+* **Metrics:** 3x3 tier confusion matrix, false alarm rate (served a higher tier than needed), and miss rate (served a lower tier than needed). The holdout numbers are in `README.md`.
 
 ### Block 5: Memory or Context Budget Management
-* **Implementation:** An active context budget manager persisting state across agent runs.
+* **Implementation:** A per-session token budget plus a ledger that persists across server restarts.
 * **Mechanisms:**
-  * Tracks cumulative prompt token consumption across multi-turn interactions.
-  * Persists session cache summaries to a local `context_budget.json` ledger.
-  * Restart test: Demonstrates that upon agent restart, the server retains the repository's symbol map and token statistics without re-parsing files.
+  * Caps the tokens served per session and steps down a tier when the chosen one does not fit.
+  * Persists the request history, totals, and the workspace symbol index to a local `context_budget.json` ledger.
+  * Restart test: after a restart the symbol index is rebuilt from the ledger and unchanged files are not parsed again (the file being served is still parsed for each request).
 
 ### Block 9: A Measured Comparison
-* **Implementation:** Manual evaluation with the Pi coding agent on real Python tasks that come with tests (see Phase 14 in `todo.md`).
-* **Comparison:**
+* **Implementation:** Our own bug-fix benchmark run through the Pi coding agent (method in `eval/PROTOCOL.md`, runner `eval/pi_bench.py`). SWE-bench was ruled out because its grader needs a multi-GB Docker image per task; small exercise sets were ruled out because their single small files leave nothing for ACC-MCP to save.
+* **Repositories and tasks:** 10 tasks, each a one-line bug injected into one function of a pinned release of a popular pure-Python library (the SWE-smith approach), graded by that library's own tests:
+  * **more-itertools `v11.2.1`** (https://github.com/more-itertools/more-itertools): 5 tasks in `more_itertools/more.py` (5,644 lines, ~45K tokens, larger than the model's context window): `split_at`, `numeric_range.index`, `difference`, `is_sorted`, `constrained_batches`.
+  * **click `8.5.0`** (https://github.com/pallets/click): 5 tasks across `core.py` (3,799 lines), `types.py`, `parser.py`, `formatting.py`: argument unpacking, `IntRange` minimum, eager-parameter order, `nargs=-1` envvar splitting, `--help` column layout.
+* **Comparison:** every task is done twice by hand in interactive Pi (the operator pastes the bug report and follows fixed rules: no hints, only "Proceed as you think best." / "Continue."), with the same model, prompt, tools, settings and time limit; measurements come from Pi's own session file:
   * **Baseline:** Plain Pi with Qwen3.5-4B.
-  * **Gated:** Pi with Qwen3.5-4B and ACC-MCP.
-* **Reported Metrics:** Whether the task's tests pass, prompt tokens used, tiers served, and how often the agent escalated with `min_tier`.
+  * **Gated:** Pi with Qwen3.5-4B and ACC-MCP (plus one sentence telling the model to prefer it for reading code).
+* **Grading:** the agent sees only a user-style bug report. After its run the original tests are restored; the task is resolved when the target tests pass and the full suite has no new failures.
+* **Reported Metrics:** resolved or not, peak context of one model call, total prompt tokens, model calls, tools used, tiers served, and how often the agent escalated with `min_tier`.
+* **Where:** results go to `eval/results.md`. These runs have not been done yet.
 
 ---
 
 ## 6. Verification and Requirements (R1–R4)
 
-* **R1 (It Runs):** Runs locally against `llama-server` running `Qwen3.5-4B-Q4_K_M.gguf` on port 8080 (or Cerebras Qwen 3.8 27B fallback) via a documented `README.md`.
-* **R2 (Automated Tests):** Comprehensive `pytest` suite testing AST parsing, decision threshold outputs, safety gates, and MCP protocol responses.
+* **R1 (It Runs):** Runs inside the Pi coding agent against a local `llama-server` serving Qwen3.5-4B (`Q4_K_M` GGUF) on port 8080, with setup steps in `README.md` (pending Phase 14).
+* **R2 (Automated Tests):** `pytest` suite testing AST parsing, the call graph, decision model outputs, safety gates, the session budget, and the MCP tools.
 * **R3 (AI-Use Log):** Work session transcripts recorded in `ai_log/` with annotations on prompts refined and manual code corrections.
-* **R4 (Defence Readiness):** Clear, modular code layout with strict separation between AST parsing (`parser.py`), decision model inference (`decision.py`), guardrails (`guard.py`), and MCP endpoints (`server.py`).
+* **R4 (Defence Readiness):** Clear, modular code layout with strict separation between AST parsing (`parser.py`), decision model inference (`decision.py`), guardrails (`guard.py`), budget and symbol index (`budget.py`, `index.py`), and MCP endpoints (`server.py`).

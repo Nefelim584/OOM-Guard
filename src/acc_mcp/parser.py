@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -637,6 +638,18 @@ class ASTParser:
         if not header:
             return code
         return f"{header}\n{code}" if code else header
+
+    def served_line_ranges(self, text: str) -> list[tuple[str, int, int]]:
+        """(label, start, end) of every `# <file> lines a-b: <label>` line in a slice of this file.
+
+        Reads back the location lines written by `_location_line` and `_render_segment`,
+        so a Tier 3 slice cut by the ceiling reports only the lines it really shows.
+        """
+        pattern = re.compile(
+            rf"^# {re.escape(self.display_name)} lines (\d+)-(\d+): (.+)$", re.MULTILINE
+        )
+        ranges = [(m.group(3), int(m.group(1)), int(m.group(2))) for m in pattern.finditer(text)]
+        return list(dict.fromkeys(ranges))
 
     def get_tier1_context(self, symbol_name: str | None = None) -> str:
         """Generate Tier 1 context: module interfaces, signatures, docstrings, type hints.

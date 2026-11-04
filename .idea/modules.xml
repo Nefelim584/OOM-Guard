@@ -2,6 +2,19 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/click.iml" filepath="$PROJECT_DIR$/.idea/click.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/click-example-aliases.iml" filepath="$PROJECT_DIR$/.idea/click-example-aliases.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/click-example-colors.iml" filepath="$PROJECT_DIR$/.idea/click-example-colors.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/click-example-completion.iml" filepath="$PROJECT_DIR$/.idea/click-example-completion.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/click-example-complex.iml" filepath="$PROJECT_DIR$/.idea/click-example-complex.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/click-example-imagepipe.iml" filepath="$PROJECT_DIR$/.idea/click-example-imagepipe.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/click-example-inout.iml" filepath="$PROJECT_DIR$/.idea/click-example-inout.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/click-example-naval.iml" filepath="$PROJECT_DIR$/.idea/click-example-naval.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/click-example-repo.iml" filepath="$PROJECT_DIR$/.idea/click-example-repo.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/click-example-termui.iml" filepath="$PROJECT_DIR$/.idea/click-example-termui.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/click-example-validation.iml" filepath="$PROJECT_DIR$/.idea/click-example-validation.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/more-itertools.iml" filepath="$PROJECT_DIR$/.idea/more-itertools.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/more-itertools@1.iml" filepath="$PROJECT_DIR$/.idea/more-itertools@1.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/oom-guard.iml" filepath="$PROJECT_DIR$/.idea/oom-guard.iml" />
     </modules>
   </component>

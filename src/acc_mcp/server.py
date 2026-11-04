@@ -18,7 +18,7 @@ except ImportError:
             "mcp SDK is required for acc_mcp.server. Install with 'pip install mcp>=1.0.0'."
         ) from exc
 
-from acc_mcp.budget import ContextBudgetTracker
+from acc_mcp.budget import LOOKUP_TOOL, ContextBudgetTracker, ServedRange
 from acc_mcp.decision import DecisionModel
 from acc_mcp.guard import GuardRail, SecurityViolationError
 from acc_mcp.index import WorkspaceIndex
@@ -255,16 +255,21 @@ def create_server(
                 budget_tracker.save_ledger()
             return served.text
 
+        line_ranges = [
+            ServedRange(file=str(path_obj), symbol=label, start=start, end=end)
+            for label, start, end in parser.served_line_ranges(served.text)
+        ]
         budget_tracker.record_retrieval(
             file_path=str(path_obj),
             task_intent=task_intent,
             served_tier=served.tier,
-            baseline_content=file_content,
+            whole_file_content=file_content,
             served_content=served.text,
             symbol_name=symbol_name,
             requested_min_tier=effective_min_tier,
             model_tier=decision.tier,
             budget_limited=served.budget_limited,
+            line_ranges=line_ranges,
         )
 
         return served.text
@@ -282,7 +287,7 @@ def create_server(
         Args:
             name: Bare name ("authenticate") or qualified name ("UserManager.authenticate").
         """
-        workspace_index.refresh()
+        workspace_index.refresh(save=False)
         matches = workspace_index.find(name)
         payload = {
             "query": name,
@@ -290,16 +295,27 @@ def create_server(
             "total_matches": len(matches),
             "truncated": len(matches) > FIND_SYMBOL_LIMIT,
         }
-        return json.dumps(payload, indent=2)
+        text = json.dumps(payload, indent=2)
+        # Saves the ledger (and the refreshed index) once for this request
+        budget_tracker.record_tool_output(LOOKUP_TOOL, text)
+        return text
 
     @server.tool()
     async def get_token_ledger() -> str:
-        """Retrieve the cumulative session token audit log and savings ledger.
+        """Retrieve the token ledger: what ACC-MCP served, per tier and per tool.
 
-        `summary` has all-time totals, `escalation_rate` (share of requests where min_tier
-        was raised above the model's tier), and the current session budget
-        (`session_budget`, `session_served_tokens`, `session_remaining_tokens`). `history`
-        holds only the most recent `history_limit` requests.
+        `summary` has all-time totals: `cumulative_served_tokens` (slices),
+        `served_tokens_by_tier`, `served_tokens_by_tool` (get_adaptive_context and
+        find_symbol), `escalation_rate` (share of requests where min_tier was raised above
+        the model's tier), and the current session budget (`session_budget`,
+        `session_served_tokens`, `session_remaining_tokens`).
+
+        `whole_file_tokens` and `upper_bound_savings_pct` compare the slices with reading
+        each whole file. That is an upper bound, NOT the saving against what the agent
+        would really have read: agents usually grep and read small line windows instead.
+
+        `history` holds only the most recent `history_limit` requests; each record lists
+        the `line_ranges` (file, symbol, start, end) shown in its slice.
         """
         payload = {
             "summary": budget_tracker.get_summary(),
