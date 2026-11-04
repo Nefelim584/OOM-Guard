@@ -387,6 +387,152 @@ def test_tasks_mix_direct_and_call_graph_tasks():
             assert task["symbol"] not in task["problem"]  # the report never names the buggy helper
 
 
+# ---------------------------------------------------------------------------
+# 5. Frozen setup and report (Phase 26)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "quantization"),
+    [
+        ("/models/Qwen3.5-4B-Q6_K.gguf", "Q6_K"),
+        ("unsloth/Qwen3.5-4B-GGUF:Q4_K_M", "Q4_K_M"),
+        ("Qwen3.5-4B-UD-IQ4_XS-00001-of-00002.gguf", "IQ4_XS"),
+        ("qwen3.5-4b-bf16.gguf", "BF16"),
+        ("qwen3.5-4b", None),
+    ],
+)
+def test_model_quantization(name, quantization):
+    """Verify the quantization is read from the model file name, not from `Qwen3.5`."""
+    assert pi_bench.model_quantization(name) == quantization
+
+
+GOOD_SETUP = {"context_window": 30208, "acc_mcp_commit": "abcdef1234567890", "acc_mcp_dirty": False, "pi_version": "1.0.2"}
+
+
+def test_freeze_problems():
+    """Verify freezing needs the model running, committed code, Pi, and baselines that pass tests."""
+    assert pi_bench.freeze_problems(GOOD_SETUP, {"click": {"passed": 765}, "more-itertools": {"passed": 600}}) == []
+
+    bad = {**GOOD_SETUP, "context_window": None, "acc_mcp_dirty": True, "pi_version": None}
+    problems = pi_bench.freeze_problems(bad, {"click": {"passed": 0}, "more-itertools": None})
+    assert len(problems) == 5
+    assert any("passed 0 tests" in p and "click" in p for p in problems)
+    assert any("no baseline for more-itertools" in p for p in problems)
+    assert any("uncommitted changes" in p for p in problems)
+
+
+def test_freeze_writes_setup_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Verify freeze records the setup, refuses to overwrite it, and refuses a broken baseline."""
+    import argparse
+
+    monkeypatch.setattr(pi_bench, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(pi_bench, "collect_setup", lambda endpoint: {**GOOD_SETUP, "quantization": "Q6_K"})
+    monkeypatch.setattr(pi_bench, "load_tasks", lambda: {"repos": {"click": {}}, "tasks": []})
+    monkeypatch.setattr(pi_bench, "load_baseline", lambda name: {"passed": 765})
+    args = argparse.Namespace(run_id="bench9", force=False, endpoint="http://x")
+
+    assert pi_bench.cmd_freeze(args) == 0
+    assert pi_bench.load_setup("bench9") == {"run_id": "bench9", **GOOD_SETUP, "quantization": "Q6_K"}
+    assert pi_bench.cmd_freeze(args) == 1
+
+    monkeypatch.setattr(pi_bench, "load_baseline", lambda name: {"passed": 0})
+    assert pi_bench.cmd_freeze(argparse.Namespace(run_id="bench10", force=False, endpoint="http://x")) == 1
+    assert pi_bench.load_setup("bench10") is None
+
+
+def test_prepare_check_against_frozen_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Verify a run that no longer matches the frozen window or tasks.json is refused."""
+    monkeypatch.setattr(pi_bench, "RUNS_DIR", tmp_path / "runs")
+    frozen = tmp_path / "runs" / "bench1" / "setup.json"
+    frozen.parent.mkdir(parents=True)
+    frozen.write_text(json.dumps({"context_window": 30208, "tasks_sha256": pi_bench._sha256(pi_bench.TASKS_FILE)}))
+
+    assert pi_bench.check_frozen("bench1", 30208) is None
+    assert "8192" in pi_bench.check_frozen("bench1", 8192)
+    assert pi_bench.check_frozen("not_frozen", 8192) is None  # only a warning
+
+    frozen.write_text(json.dumps({"context_window": 30208, "tasks_sha256": "0" * 64}))
+    assert "tasks.json changed" in pi_bench.check_frozen("bench1", 30208)
+
+
+def make_result(task, mode, kind, resolved, nav_before, code_read_tokens, acc_tokens=0, acc=None, navigation=True):
+    """A result.json as collect writes it, with only the fields the report reads."""
+    result = {
+        "task": task, "mode": mode, "kind": kind, "hint": mode == "acc", "notes": "grep | read",
+        "pi": {"peak_context_tokens": 10000, "total_prompt_tokens": 30000, "model_calls": 10, "minutes": 2.5,
+               "tool_calls": {"read": 3}},
+        "grade": {"resolved": resolved, "touched_tests": False},
+        "acc": acc,
+    }
+    if navigation:
+        classes = {k: {"calls": 0, "tokens": 0} for k in pi_bench.CALL_KINDS}
+        classes["code_read"] = {"calls": 3, "tokens": code_read_tokens}
+        classes["acc"] = {"calls": 1, "tokens": acc_tokens}
+        result["navigation"] = {
+            "navigation_calls_before_target_edit": nav_before, "target_edited": nav_before is not None,
+            "wasted_reads": 1, "large_reads": 0, "tool_classes": classes,
+        }
+    return result
+
+
+LEDGER = {"requests": 2, "served_tiers": {"1": 1, "2": 0, "3": 1}, "model_tiers": {"1": 2, "2": 0, "3": 0},
+          "escalations": 1, "silent_escalations": 0}
+
+
+@pytest.fixture
+def report_results():
+    return [
+        make_result("mi_split_at", "plain", "direct", True, 5, 900),
+        make_result("mi_split_at", "acc", "direct", True, 2, 100, acc_tokens=300, acc=LEDGER),
+        make_result("ck_help_columns", "plain", "call_graph", False, None, 2000),
+    ]
+
+
+def test_report_summaries_per_mode_and_kind(report_results):
+    """Verify medians skip unmeasured values and every hypothesis column is filled from the results."""
+    text = pi_bench.render_report([("bench1", report_results, None)], kinds={})
+
+    assert "**Setup not frozen**" in text
+    # Mode | Runs | Resolved | nav before edit (None skipped) | code-reading tokens (900, 2000 -> 1450)
+    assert "| plain | 2 | 1/2 | 5 | 1450 | 1 | 0 | 10000 |" in text
+    assert "| acc | 1 | 1/1 | 2 | 400 |" in text  # 100 own reads + 300 ACC-MCP
+    assert "| call_graph / plain | 1 | 0/1 | – | 2000 |" in text
+    assert "call_graph / acc" not in text
+
+
+def test_report_acc_section_and_paired_table(report_results):
+    """Verify ACC-MCP use, the online miss rate, and plain / acc pairs, with – for a missing run."""
+    text = pi_bench.render_report([("bench1", report_results, None)], kinds={})
+
+    assert "Called in **1 of 1** acc runs (0 without the hint sentence)." in text
+    assert "tiers 1/2/3 served = 1/0/1, picked by the decision model = 2/0/0" in text
+    assert "1 explicit (`min_tier`), 0 silent; online miss rate **0.5**" in text
+    assert "| mi_split_at | direct | yes / yes | 5 / 2 | 900 / 400 | 1 / 1 | 10000 / 10000 | 1/0/1 | 1 / 0 |" in text
+    assert "| ck_help_columns | call_graph | no / – | – / – | 2000 / – | 1 / – | 10000 / – | – | – |" in text
+    assert "grep / read" in text  # notes cannot break the table
+
+
+def test_report_setup_table_and_several_runs(report_results):
+    """Verify the frozen setup is printed and every run id gets its own section."""
+    setup = {**GOOD_SETUP, "quantization": "Q6_K", "session_budget": 6042, "session_budget_share": 0.2}
+    text = pi_bench.render_report(
+        [("bench1", report_results, setup), ("bench2", report_results[:1], None)], kinds={},
+    )
+    assert "| ACC-MCP commit | abcdef123456 |" in text
+    assert "| Quantization | Q6_K |" in text
+    assert "| Session budget | 6042 (20% of the window) |" in text
+    assert "## Run `bench1`" in text and "## Run `bench2`" in text
+
+
+def test_summarize_result_without_navigation():
+    """Verify a result collected before Phase 24 is reported as not measured, not as zero."""
+    summary = pi_bench.summarize([make_result("t", "plain", "direct", True, None, 0, navigation=False)])
+    assert summary["nav_before_edit"] is None
+    assert summary["code_reading_tokens"] is None
+    assert summary["large_reads"] == 0
+
+
 def test_old_ledger_without_line_ranges_gives_no_silent_count(acc_run):
     """Verify a pre-Phase 23 ledger reports silent escalations as unknown, not as zero."""
     cwd, calls, ledger = acc_run

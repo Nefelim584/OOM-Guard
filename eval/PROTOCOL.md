@@ -129,6 +129,8 @@ Each task runs once in each of two modes. The **only** differences between the m
 
 The runs are done by hand: the operator opens Pi, gives the model the task, watches it work, and stops. The script only prepares the run beforehand and measures it afterwards.
 
+Once per run id, before its first counted run, the setup is **frozen** (`pi_bench.py freeze`, section 11); `results.md` prints it with that run's results.
+
 1. **Prepare** (`pi_bench.py prepare <task> --mode <plain|acc>`): copy the pinned repo into `eval/work/runs/<run-id>/<mode>/<task>/workspace/` without `.git`, inject the bug, `git init`, commit everything as "Initial commit" (test caches are hidden via `.git/info/exclude`). Write the isolated Pi configuration (section 5), `start.sh`, and `prompt.txt`.
 2. **Open Pi**: `bash .../start.sh`. It changes into the workspace, sets the Pi config folder, the test venv and (click) `PYTHONPATH`, and starts interactive Pi with the local model; acc mode also appends the hint.
 3. **Give the task**: paste `prompt.txt` as the first message, unchanged.
@@ -242,7 +244,10 @@ uv sync                                   # ACC-MCP must be importable from .ven
 python3 eval/pi_bench.py setup            # clone both repos at their tags, create eval/work/venv, click metadata stub
 python3 eval/pi_bench.py validate         # both clean suites pass > 0 tests, all 10 tasks OK
 python3 eval/pi_bench.py doctor           # model, Pi version; acc-mcp must be connected with 4 tools
+python3 eval/pi_bench.py freeze           # record commit, model file, quantization, llama-server build, Pi, window, budget
 ```
+
+`freeze` writes `eval/work/runs/bench1/setup.json` and refuses while the model is not running, Pi is missing, a clean suite passes 0 tests, or `src/`, `eval/pi_bench.py`, `eval/tasks.json`, `eval/PROTOCOL.md`, `pyproject.toml` or `uv.lock` have uncommitted changes (the commit hash would not identify the code). After that, `prepare` refuses a run whose context window or `tasks.json` differs from the frozen setup. A changed setup needs a new `--run-id`.
 
 For each task, plain first, then acc:
 
@@ -261,6 +266,9 @@ Progress and results:
 ```bash
 python3 eval/pi_bench.py list             # which task/mode pairs are prepared or collected
 python3 eval/pi_bench.py report           # writes eval/results.md
+python3 eval/pi_bench.py report --run-id bench1 --run-id bench2 --run-id nohint1   # every run, one section each
 ```
 
-Use `--run-id` for a repeat of the whole set, and `prepare --mode acc --no-hint` to try ACC-MCP without the hint sentence. Everything for one run is in `eval/work/runs/<run-id>/<mode>/<task>/`: `start.sh`, `prompt.txt`, `sessions/` (Pi session), `acc_ledger.json`, `patch.diff`, `junit_target.xml`, `junit_full.xml`, `result.json`.
+`results.md` has, per run id: the frozen setup; a summary per mode and per task kind (resolved, navigation calls before the target edit, code-reading tokens, wasted and large reads, peak context, prompt tokens, model calls, minutes); ACC-MCP use, tiers and escalations with the online miss rate; a paired plain / acc table per task; and every run with the operator's notes.
+
+Use a new `--run-id` (and `freeze` it) for a repeat of the whole set. `prepare --mode acc --no-hint` tries ACC-MCP without the hint sentence; give those runs their own run id (e.g. `nohint1`), because an acc run of a task occupies the same folder with or without the hint. Everything for one run is in `eval/work/runs/<run-id>/<mode>/<task>/`: `start.sh`, `prompt.txt`, `sessions/` (Pi session), `acc_ledger.json`, `patch.diff`, `junit_target.xml`, `junit_full.xml`, `result.json`.

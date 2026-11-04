@@ -17,7 +17,9 @@ For each task (a bug injected into a pinned release of more-itertools or click) 
         -> eval/results.md, plain vs ACC-MCP side by side
 
 One-time: `setup` (clone repos, create the test venv), `validate` (each injected bug breaks its
-tests), `doctor` (model reachable, Pi can start ACC-MCP). Method: eval/PROTOCOL.md.
+tests), `doctor` (model reachable, Pi can start ACC-MCP), `freeze` (record commit, model, server,
+Pi, window and budget for a run id; `prepare` refuses runs that no longer match it).
+Method: eval/PROTOCOL.md.
 Only the Python standard library is used.
 """
 
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import os
 import re
@@ -207,12 +210,21 @@ def baseline_failures(repo_name: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+def fetch_json(url: str) -> dict[str, Any] | None:
+    """GET a JSON document (llama-server /props, /v1/models); None if unreachable."""
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            return json.load(resp)
+    except Exception:
+        return None
+
+
 def query_context_window(endpoint: str = DEFAULT_ENDPOINT) -> int:
     """Per-slot context size of the running llama-server (falls back to REFERENCE_CONTEXT_WINDOW)."""
+    props = fetch_json(f"{endpoint}/props")
     try:
-        with urllib.request.urlopen(f"{endpoint}/props", timeout=5) as resp:
-            return int(json.load(resp)["default_generation_settings"]["n_ctx"])
-    except Exception:
+        return int(props["default_generation_settings"]["n_ctx"])  # type: ignore[index]
+    except (TypeError, KeyError, ValueError):
         print(f"[warning] llama-server /props not reachable at {endpoint}; "
               f"assuming the reference window of {REFERENCE_CONTEXT_WINDOW} tokens")
         return REFERENCE_CONTEXT_WINDOW
@@ -915,12 +927,16 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     if out_dir.exists() and not args.force:
         print(f"[prepare] {out_dir} already exists; use --force to start this task over")
         return 1
+    context_window = query_context_window(args.endpoint)
+    changed = check_frozen(args.run_id, context_window)
+    if changed:
+        print(f"[prepare] refused: {changed}. Counted runs must match the frozen setup; use a new --run-id.")
+        return 1
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
 
     workspace = make_workspace(REPOS_DIR / task["repo"], out_dir / "workspace", task)
-    context_window = query_context_window(args.endpoint)
     session_budget = args.session_budget or session_budget_for(context_window)
     write_agent_dir(out_dir / "pi-agent", args.mode, workspace, out_dir / "acc_ledger.json",
                     context_window, args.endpoint, session_budget)
@@ -932,7 +948,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     prompt = build_prompt(task)
     (out_dir / "prompt.txt").write_text(prompt + "\n", encoding="utf-8")
     (out_dir / "run.json").write_text(json.dumps({
-        "task": task["id"], "repo": task["repo"], "mode": args.mode, "hint": hint,
+        "task": task["id"], "repo": task["repo"], "kind": task.get("kind"), "mode": args.mode, "hint": hint,
         "context_window": context_window, "session_budget": session_budget if args.mode == "acc" else None,
         "prepared_at": datetime.now().isoformat(timespec="seconds"),
     }, indent=2), encoding="utf-8")
@@ -1006,59 +1022,325 @@ def cmd_collect(args: argparse.Namespace) -> int:
     return 0
 
 
-def _median(values: list[float]) -> float:
-    return round(statistics.median(values), 1) if values else 0
+# ---------------------------------------------------------------------------
+# Frozen setup (Phase 26): what a counted run was done with
+# ---------------------------------------------------------------------------
+
+SETUP_FILE = "setup.json"
+# Files whose uncommitted changes would make the recorded commit hash meaningless
+FROZEN_PATHS = ("src", "eval/pi_bench.py", "eval/tasks.json", "eval/PROTOCOL.md", "pyproject.toml", "uv.lock")
 
 
-def render_report(results: list[dict[str, Any]], run_id: str) -> str:
+def _sha256(path: Path) -> str | None:
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+
+
+def model_quantization(name: str) -> str | None:
+    """GGUF quantization from a model file or id, e.g. `Qwen3.5-4B-Q6_K.gguf` -> `Q6_K`."""
+    m = re.search(r"(?i)(?<![A-Za-z0-9])(I?Q\d(?:_[A-Z0-9]+)*|BF16|F16|F32)(?![A-Za-z0-9])", name)
+    return m.group(1).upper() if m else None
+
+
+def collect_setup(endpoint: str) -> dict[str, Any]:
+    """Everything a counted run depends on: code version, model, server, agent, window, budget."""
+    props = fetch_json(f"{endpoint}/props") or {}
+    models = fetch_json(f"{endpoint}/v1/models") or {}
+    model_id = ((models.get("data") or [{}])[0]).get("id", "")
+    model_path = str(props.get("model_path") or "")
+    try:
+        window = int(props["default_generation_settings"]["n_ctx"])
+    except (KeyError, TypeError, ValueError):
+        window = None
+    try:
+        pi = subprocess.run(["pi", "--version"], capture_output=True, text=True)
+        pi_version = pi.stdout.strip() or pi.stderr.strip() or None
+    except FileNotFoundError:
+        pi_version = None
+    dirty = _git(PROJECT_ROOT, "status", "--porcelain", "--", *FROZEN_PATHS, check=False).stdout.strip()
+    return {
+        "frozen_at": datetime.now().isoformat(timespec="seconds"),
+        "acc_mcp_commit": _git(PROJECT_ROOT, "rev-parse", "HEAD", check=False).stdout.strip() or None,
+        "acc_mcp_dirty": bool(dirty),
+        "model_id": model_id or None,
+        "model_path": model_path or None,
+        "quantization": model_quantization(model_path) or model_quantization(model_id),
+        "llama_server_build": props.get("build_info"),
+        "pi_version": pi_version,
+        "context_window": window,
+        "session_budget": session_budget_for(window) if window else None,
+        "session_budget_share": SESSION_BUDGET_SHARE,
+        "tasks_sha256": _sha256(TASKS_FILE),
+        "protocol_sha256": _sha256(EVAL_DIR / "PROTOCOL.md"),
+    }
+
+
+def freeze_problems(setup: dict[str, Any], baselines: dict[str, dict[str, Any] | None]) -> list[str]:
+    """Reasons the setup cannot be frozen for counted runs; empty when it can."""
+    problems = []
+    if setup["context_window"] is None:
+        problems.append("llama-server /props is not reachable: start the model first")
+    if not setup["acc_mcp_commit"]:
+        problems.append("no git commit found for ACC-MCP")
+    if setup["acc_mcp_dirty"]:
+        problems.append(f"uncommitted changes in {', '.join(FROZEN_PATHS)}: commit them so the hash identifies the code")
+    if not setup["pi_version"]:
+        problems.append("`pi --version` failed: is Pi installed?")
+    for repo, baseline in baselines.items():
+        if baseline is None:
+            problems.append(f"no baseline for {repo}: run `validate`")
+        elif int(baseline.get("passed", 0)) == 0:
+            problems.append(f"the clean {repo} suite passed 0 tests: run `setup` and `validate` again")
+    return problems
+
+
+def load_baseline(repo_name: str) -> dict[str, Any] | None:
+    path = BASELINE_DIR / f"{repo_name}.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def load_setup(run_id: str) -> dict[str, Any] | None:
+    path = RUNS_DIR / run_id / SETUP_FILE
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def cmd_freeze(args: argparse.Namespace) -> int:
+    """Record the setup of a run id once, before its first counted run."""
+    path = RUNS_DIR / args.run_id / SETUP_FILE
+    if path.exists() and not args.force:
+        print(f"[freeze] {args.run_id} is already frozen ({path}); use a new --run-id, or --force to replace it")
+        return 1
+    setup = collect_setup(args.endpoint)
+    problems = freeze_problems(setup, {name: load_baseline(name) for name in load_tasks()["repos"]})
+    if problems:
+        for problem in problems:
+            print(f"[freeze] NOT frozen: {problem}")
+        return 1
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"run_id": args.run_id, **setup}, indent=2), encoding="utf-8")
+    print(json.dumps(setup, indent=2))
+    print(f"[freeze] {args.run_id} frozen in {path}")
+    return 0
+
+
+def check_frozen(run_id: str, context_window: int) -> str | None:
+    """Why `prepare` must not continue under this run id (frozen setup changed), or None."""
+    setup = load_setup(run_id)
+    if setup is None:
+        print(f"[prepare] warning: run {run_id!r} is not frozen; run `freeze --run-id {run_id}` before counted runs")
+        return None
+    if setup.get("context_window") != context_window:
+        return f"context window is {context_window}, but {run_id} was frozen with {setup.get('context_window')}"
+    if setup.get("tasks_sha256") != _sha256(TASKS_FILE):
+        return f"eval/tasks.json changed since {run_id} was frozen"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Report (Phase 26)
+# ---------------------------------------------------------------------------
+
+
+def _median(values: list[float | None]) -> float | None:
+    """Median of the measured values; None (shown as "–") when nothing was measured."""
+    known = [v for v in values if v is not None]
+    return round(statistics.median(known), 1) if known else None
+
+
+def _fmt(value: Any) -> str:
+    if value is None:
+        return "–"
+    return f"{value:g}" if isinstance(value, float) else str(value)
+
+
+def _nav(result: dict[str, Any], key: str) -> Any:
+    return (result.get("navigation") or {}).get(key)
+
+
+def code_reading_tokens(result: dict[str, Any]) -> int | None:
+    """Output tokens of the agent's own code reading plus ACC-MCP output (H1)."""
+    classes = _nav(result, "tool_classes")
+    return classes["code_read"]["tokens"] + classes["acc"]["tokens"] if classes else None
+
+
+def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Counts and medians for one group of runs (one mode, or one mode and task kind)."""
+    return {
+        "runs": len(results),
+        "resolved": sum(bool(r["grade"]["resolved"]) for r in results),
+        "nav_before_edit": _median([_nav(r, "navigation_calls_before_target_edit") for r in results]),
+        "target_edited": sum(bool(_nav(r, "target_edited")) for r in results),
+        "code_reading_tokens": _median([code_reading_tokens(r) for r in results]),
+        "wasted_reads": _median([_nav(r, "wasted_reads") for r in results]),
+        "large_reads": sum(_nav(r, "large_reads") or 0 for r in results),
+        "peak_context": _median([r["pi"]["peak_context_tokens"] for r in results]),
+        "prompt_tokens": _median([r["pi"]["total_prompt_tokens"] for r in results]),
+        "model_calls": _median([r["pi"]["model_calls"] for r in results]),
+        "minutes": _median([r["pi"]["minutes"] for r in results]),
+    }
+
+
+def acc_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """ACC-MCP use and the decision model's online miss rate over all acc runs."""
+    acc_runs = [r for r in results if r["mode"] == "acc"]
+    ledgers = [r["acc"] for r in acc_runs if r.get("acc")]
+    with_silent = [a for a in ledgers if a.get("silent_escalations") is not None]
+    slices = sum(a["requests"] for a in with_silent)
+    misses = sum(a["escalations"] + a["silent_escalations"] for a in with_silent)
+    return {
+        "runs": len(acc_runs),
+        "used": sum(1 for a in ledgers if a["requests"]),
+        "without_hint": sum(1 for r in acc_runs if r.get("hint") is False),
+        "slices": sum(a["requests"] for a in ledgers),
+        "served_tiers": {t: sum(a["served_tiers"][t] for a in ledgers) for t in ("1", "2", "3")},
+        "model_tiers": {t: sum(a["model_tiers"][t] for a in ledgers) for t in ("1", "2", "3")},
+        "explicit_escalations": sum(a["escalations"] for a in ledgers),
+        "silent_escalations": sum(a["silent_escalations"] for a in with_silent) if with_silent else None,
+        "online_miss_rate": round(misses / slices, 4) if slices else None,
+    }
+
+
+def _setup_lines(setup: dict[str, Any] | None) -> list[str]:
+    if setup is None:
+        return ["**Setup not frozen** (`freeze` was not run for this run id): these runs are not counted results.", ""]
+    commit = (setup.get("acc_mcp_commit") or "?")[:12] + (" (with uncommitted changes)" if setup.get("acc_mcp_dirty") else "")
+    budget = setup.get("session_budget")
+    rows = [
+        ("Frozen at", setup.get("frozen_at")),
+        ("ACC-MCP commit", commit),
+        ("Model", setup.get("model_id")),
+        ("Model file", setup.get("model_path")),
+        ("Quantization", setup.get("quantization")),
+        ("llama-server build", setup.get("llama_server_build")),
+        ("Pi", setup.get("pi_version")),
+        ("Context window", setup.get("context_window")),
+        ("Session budget", f"{budget} ({setup.get('session_budget_share', 0):.0%} of the window)" if budget else None),
+        ("tasks.json / PROTOCOL.md sha256", f"{(setup.get('tasks_sha256') or '?')[:12]} / {(setup.get('protocol_sha256') or '?')[:12]}"),
+    ]
+    return ["| Item | Value |", "| :--- | :--- |", *(f"| {k} | {_fmt(v)} |" for k, v in rows), ""]
+
+
+def _summary_table(groups: list[tuple[str, list[dict[str, Any]]]], label: str) -> list[str]:
     lines = [
-        f"# Pi Benchmark Results (run `{run_id}`)", "",
-        "Plain Pi vs Pi + ACC-MCP, operated by hand in interactive Pi (method: `eval/PROTOCOL.md`).",
-        "Context = whole prompt of one model call (input + cached tokens, from Pi's session file).", "",
-        "## Summary", "",
-        "| Mode | Runs | Resolved | Median peak context | Median prompt tokens / task | Median model calls | Median minutes |",
-        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
+        f"| {label} | Runs | Resolved (H2) | Nav calls before target edit (H1) | Code-reading tokens (H1) "
+        "| Wasted reads | Large reads (total) | Peak context (H3) | Prompt tokens | Model calls | Minutes |",
+        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
     ]
-    for mode in MODES:
-        rs = [r for r in results if r["mode"] == mode]
-        if rs:
-            lines.append(
-                f"| {mode} | {len(rs)} | {sum(r['grade']['resolved'] for r in rs)}/{len(rs)} "
-                f"| {_median([r['pi']['peak_context_tokens'] for r in rs]):g} "
-                f"| {_median([r['pi']['total_prompt_tokens'] for r in rs]):g} "
-                f"| {_median([r['pi']['model_calls'] for r in rs]):g} "
-                f"| {_median([r['pi']['minutes'] for r in rs]):g} |"
-            )
-    acc = [r for r in results if r["mode"] == "acc"]
-    if acc:
-        used = sum(1 for r in acc if r["acc"] and r["acc"]["requests"])
-        lines += ["", f"ACC-MCP was actually called in {used} of {len(acc)} acc runs."]
-    lines += [
-        "", "## Per Task", "",
-        "| Task | Mode | Resolved | Calls | Peak ctx | Prompt tokens | Tools used | ACC tiers 1/2/3 | Escalations | Min | Notes |",
-        "| :--- | :--- | :---: | :---: | :---: | :---: | :--- | :---: | :---: | :---: | :--- |",
-    ]
-    for r in sorted(results, key=lambda r: (r["task"], r["mode"])):
-        p, g, a = r["pi"], r["grade"], r["acc"]
-        tools = ", ".join(f"{k.replace('mcp__acc_mcp__', 'acc:')}×{v}" for k, v in sorted(p["tool_calls"].items()))
-        tiers = "/".join(str(a["served_tiers"][t]) for t in ("1", "2", "3")) if a else "-"
-        verdict = ("yes" if g["resolved"] else "no") + (" (edited tests)" if g["touched_tests"] else "")
-        notes = (r.get("notes") or "").replace("|", "/")
+    for name, rs in groups:
+        if not rs:
+            continue
+        s = summarize(rs)
         lines.append(
-            f"| {r['task']} | {r['mode']} | {verdict} | {p['model_calls']} | {p['peak_context_tokens']} "
-            f"| {p['total_prompt_tokens']} | {tools or '-'} | {tiers} | {a['escalations'] if a else '-'} "
-            f"| {p['minutes']} | {notes} |"
+            f"| {name} | {s['runs']} | {s['resolved']}/{s['runs']} | {_fmt(s['nav_before_edit'])} "
+            f"| {_fmt(s['code_reading_tokens'])} | {_fmt(s['wasted_reads'])} | {s['large_reads']} "
+            f"| {_fmt(s['peak_context'])} | {_fmt(s['prompt_tokens'])} | {_fmt(s['model_calls'])} | {_fmt(s['minutes'])} |"
         )
-    return "\n".join(lines) + "\n"
+    return lines + [""]
+
+
+def _pair(plain: Any, acc: Any) -> str:
+    return f"{_fmt(plain)} / {_fmt(acc)}"
+
+
+def _value_of(result: dict[str, Any] | None, fn: Any) -> Any:
+    """fn(result), or None when that mode has no run for the task."""
+    return fn(result) if result else None
+
+
+def render_run(results: list[dict[str, Any]], run_id: str, setup: dict[str, Any] | None,
+               kinds: dict[str, str]) -> list[str]:
+    """Markdown section for one run id: setup, summaries, ACC-MCP, paired and per-run tables."""
+    for r in results:
+        r.setdefault("kind", kinds.get(r["task"], "?"))
+    by_mode = [(mode, [r for r in results if r["mode"] == mode]) for mode in MODES]
+    lines = [f"## Run `{run_id}`", "", "### Setup", "", *_setup_lines(setup)]
+
+    lines += ["### Summary per mode", "",
+              "Medians over the runs of each mode, except Resolved and Large reads. – = not measured "
+              "(for example, the target function was never edited).", "",
+              *_summary_table(by_mode, "Mode")]
+    by_kind = [(f"{kind} / {mode}", [r for r in rs if r["kind"] == kind])
+               for kind in ("direct", "call_graph") for mode, rs in by_mode]
+    lines += ["### Summary per task kind", "",
+              "`call_graph` tasks name an entry function whose helper has the bug (`eval/PROTOCOL.md` 4.1).", "",
+              *_summary_table(by_kind, "Kind / mode")]
+
+    a = acc_summary(results)
+    if a["runs"]:
+        tiers = "/".join(str(a["served_tiers"][t]) for t in ("1", "2", "3"))
+        picked = "/".join(str(a["model_tiers"][t]) for t in ("1", "2", "3"))
+        lines += [
+            "### ACC-MCP", "",
+            f"- Called in **{a['used']} of {a['runs']}** acc runs ({a['without_hint']} without the hint sentence).",
+            f"- Slices served: {a['slices']}; tiers 1/2/3 served = {tiers}, picked by the decision model = {picked}.",
+            f"- Escalations: {a['explicit_escalations']} explicit (`min_tier`), {_fmt(a['silent_escalations'])} silent; "
+            f"online miss rate **{_fmt(a['online_miss_rate'])}** (explicit + silent / slices, runs with line ranges only).",
+            "",
+        ]
+
+    lines += ["### Paired per task (plain / acc)", "",
+              "| Task | Kind | Resolved | Nav calls before target edit | Code-reading tokens | Wasted reads "
+              "| Peak context | ACC tiers 1/2/3 | Escalations explicit / silent |",
+              "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |"]
+    for task in sorted({r["task"] for r in results}):
+        plain = next((r for r in results if r["task"] == task and r["mode"] == "plain"), None)
+        acc = next((r for r in results if r["task"] == task and r["mode"] == "acc"), None)
+        get = _value_of
+        ledger = acc.get("acc") if acc else None
+        lines.append(
+            f"| {task} | {(plain or acc)['kind']} "
+            f"| {_pair(get(plain, lambda r: 'yes' if r['grade']['resolved'] else 'no'), get(acc, lambda r: 'yes' if r['grade']['resolved'] else 'no'))} "
+            f"| {_pair(get(plain, lambda r: _nav(r, 'navigation_calls_before_target_edit')), get(acc, lambda r: _nav(r, 'navigation_calls_before_target_edit')))} "
+            f"| {_pair(get(plain, code_reading_tokens), get(acc, code_reading_tokens))} "
+            f"| {_pair(get(plain, lambda r: _nav(r, 'wasted_reads')), get(acc, lambda r: _nav(r, 'wasted_reads')))} "
+            f"| {_pair(get(plain, lambda r: r['pi']['peak_context_tokens']), get(acc, lambda r: r['pi']['peak_context_tokens']))} "
+            f"| {'/'.join(str(ledger['served_tiers'][t]) for t in ('1', '2', '3')) if ledger else '–'} "
+            f"| {_pair(ledger['escalations'], ledger.get('silent_escalations')) if ledger else '–'} |"
+        )
+
+    lines += ["", "### Every run", "",
+              "| Task | Mode | Hint | Resolved | Calls | Peak ctx | Prompt tokens | Tools used | Min | Notes |",
+              "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- | :---: | :--- |"]
+    for r in sorted(results, key=lambda r: (r["task"], r["mode"])):
+        p, g = r["pi"], r["grade"]
+        tools = ", ".join(f"{k.replace(ACC_PREFIX, 'acc:')}×{v}" for k, v in sorted(p["tool_calls"].items()))
+        verdict = ("yes" if g["resolved"] else "no") + (" (edited tests)" if g.get("touched_tests") else "")
+        hint = "–" if r["mode"] == "plain" else ("yes" if r.get("hint") else "no")
+        notes = (r.get("notes") or "").replace("|", "/").replace("\n", " ")
+        lines.append(
+            f"| {r['task']} | {r['mode']} | {hint} | {verdict} | {p['model_calls']} | {p['peak_context_tokens']} "
+            f"| {p['total_prompt_tokens']} | {tools or '–'} | {p['minutes']} | {notes} |"
+        )
+    return lines + [""]
+
+
+def render_report(runs: list[tuple[str, list[dict[str, Any]], dict[str, Any] | None]], kinds: dict[str, str]) -> str:
+    """eval/results.md: one section per run id, every run reported (PROTOCOL.md section 9)."""
+    lines = [
+        "# Pi Benchmark Results", "",
+        "Plain Pi vs Pi + ACC-MCP, operated by hand in interactive Pi (method and hypotheses H1-H3: "
+        "`eval/PROTOCOL.md`). The pilot session (`run1`) is not part of the results.", "",
+        "- **H1 (navigation cost):** navigation calls before the first edit of the target function, and "
+        "code-reading tokens (the agent's own `read`/`grep`/`sed`/... output plus ACC-MCP slices; characters / 3.8 "
+        "for both modes).",
+        "- **H2 (success):** resolved tasks.",
+        "- **H3 (peak context):** largest prompt of one model call, as llama-server reported it to Pi.", "",
+    ]
+    for run_id, results, setup in runs:
+        lines += render_run(results, run_id, setup, kinds)
+    return "\n".join(lines)
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    run_dir = RUNS_DIR / args.run_id
-    results = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(run_dir.glob("*/*/result.json"))]
-    if not results:
-        print(f"[report] no collected results in {run_dir}")
-        return 1
-    text = render_report(results, args.run_id)
+    kinds = {t["id"]: t.get("kind", "?") for t in load_tasks()["tasks"]}
+    runs = []
+    for run_id in args.run_id or [DEFAULT_RUN_ID]:
+        run_dir = RUNS_DIR / run_id
+        results = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(run_dir.glob("*/*/result.json"))]
+        if not results:
+            print(f"[report] no collected results in {run_dir}")
+            return 1
+        runs.append((run_id, results, load_setup(run_id)))
+    text = render_report(runs, kinds)
     RESULTS_FILE.write_text(text, encoding="utf-8")
     print(text)
     print(f"[report] written to {RESULTS_FILE}")
@@ -1096,12 +1378,17 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--force", action="store_true", help="start this task over")
         else:
             p.add_argument("--notes", default="", help="what you observed")
-    for name in ("report", "list"):
-        p = sub.add_parser(name)
-        p.add_argument("--run-id", default=DEFAULT_RUN_ID)
+    p = sub.add_parser("freeze", help="record the setup of a run id before its first counted run")
+    p.add_argument("--run-id", default=DEFAULT_RUN_ID)
+    p.add_argument("--force", action="store_true", help="replace an existing frozen setup")
+    p = sub.add_parser("report", help="write eval/results.md")
+    p.add_argument("--run-id", action="append", default=None,
+                   help=f"run id to report; repeat for several runs (default: {DEFAULT_RUN_ID})")
+    p = sub.add_parser("list")
+    p.add_argument("--run-id", default=DEFAULT_RUN_ID)
     args = parser.parse_args(argv)
-    handlers = {"setup": cmd_setup, "validate": cmd_validate, "doctor": cmd_doctor, "prepare": cmd_prepare,
-                "collect": cmd_collect, "report": cmd_report, "list": cmd_list}
+    handlers = {"setup": cmd_setup, "validate": cmd_validate, "doctor": cmd_doctor, "freeze": cmd_freeze,
+                "prepare": cmd_prepare, "collect": cmd_collect, "report": cmd_report, "list": cmd_list}
     return handlers[args.command](args)
 
 

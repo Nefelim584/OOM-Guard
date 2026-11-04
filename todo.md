@@ -202,9 +202,9 @@
 
 ## Phase 26: Benchmark Runs and Results (Block 9, R1)
 *Feature: Do the counted Pi runs under the frozen protocol from Phase 25 and publish the numbers whatever they are. Replaces Steps 14.4 and 14.5.*
-- [ ] Step 26.1: Freeze the setup and record it in `eval/results.md`: ACC-MCP commit hash, model file and quantization, `llama-server` and Pi versions, context window, session budget.
+- [ ] Step 26.1: Freeze the setup and record it in `eval/results.md`: ACC-MCP commit hash, model file and quantization, `llama-server` and Pi versions, context window, session budget. *(Tooling done: `pi_bench.py freeze` writes `runs/<run-id>/setup.json` and refuses with a dirty tree, no model, no Pi, or a 0-passed baseline; `prepare` refuses runs that no longer match it; `report` prints it. Left: run `freeze` after Step 25.5.)*
 - [ ] Step 26.2: Do every task by hand, plain then acc (`prepare` -> `start.sh` -> `collect --notes`), following the operator rules in `eval/PROTOCOL.md`.
-- [ ] Step 26.3: Run `pi_bench.py report`: resolved per mode, medians of the Phase 24 metrics and of peak context, a paired per-task table, and the number of acc runs in which the model used ACC-MCP at all.
+- [ ] Step 26.3: Run `pi_bench.py report`: resolved per mode, medians of the Phase 24 metrics and of peak context, a paired per-task table, and the number of acc runs in which the model used ACC-MCP at all. *(Tooling done: summaries per mode and per task kind, ACC-MCP use with the online miss rate, paired table, every run with notes; `--run-id` can be repeated so every run is reported. Left: run it after Step 26.2.)*
 - [ ] Step 26.4: If time allows, repeat the whole set with a new `--run-id` and do the acc runs once with `--no-hint`; report every run, not only the best.
 - [ ] Step 26.5: Run the full test suite and suggest commit name: `feat(eval): Pi benchmark results for plain vs ACC-MCP`.
 
