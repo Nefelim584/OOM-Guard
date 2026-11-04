@@ -1,7 +1,7 @@
 # Adaptive Context Compressor MCP (ACC-MCP)
 **Course:** Coding for AI & Data Science — Final Project (2026–2027)  
 **Target Model:** Qwen3.5-4B (quantized GGUF via `llama-server`; file and quantization recorded per benchmark run)  
-**Selected Building Blocks:** Block 2, Block 3, Block 4, Block 5, Block 9  
+**Selected Building Blocks:** Block 2, Block 3, Block 4, Block 5, Block 7, Block 8 (the Pi benchmark in `eval/` is exploratory and not a claimed block)  
 
 ---
 
@@ -9,7 +9,7 @@
 
 Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project uses 30,208 tokens, the per-slot window `llama-server` reports on the reference machine). Inside a coding agent, the model finds code by **navigating**: it searches with `grep`/`find` and reads files in line windows, some of which miss the code it needs. Each search and each window is a tool call whose output stays in the conversation. In the pilot session (excluded from the results) the agent never read the ~45K-token file whole. It found the function with `grep` and read it in 6 windows of 10-100 lines, 2 of which missed the function.
 
-**Adaptive Context Compressor (ACC-MCP)** is a standalone Model Context Protocol (MCP) server that gives the agent **symbol-level navigation**. `find_symbol` locates a definition, and `get_adaptive_context` serves exactly that symbol at the depth the task needs. An embedded **Decision Model** picks that depth (signatures, call graph, or verbatim body), and a deterministic code layer enforces token ceilings, a session budget and file security boundaries. Block 9 measures whether this makes finding and reading code cheaper than the agent's own `grep` + windowed `read` strategy, without lowering the success rate.
+**Adaptive Context Compressor (ACC-MCP)** is a standalone Model Context Protocol (MCP) server that gives the agent **symbol-level navigation**. `find_symbol` locates a definition, and `get_adaptive_context` serves exactly that symbol at the depth the task needs. An embedded **Decision Model** picks that depth (signatures, call graph, or verbatim body), and a deterministic code layer enforces token ceilings, a session budget and file security boundaries. An exploratory Pi benchmark (`eval/`) is built to measure whether this makes finding and reading code cheaper than the agent's own `grep` + windowed `read` strategy, without lowering the success rate. It has only trace runs so far, so no result is claimed from it (section 5).
 
 ---
 
@@ -95,7 +95,7 @@ The ledger records what ACC-MCP served (tokens per tier and per tool, and the li
 
 $$\text{Upper-bound saving (\%)} = \frac{\text{Tokens}_{\text{Whole File}} - \text{Tokens}_{\text{Served}}}{\text{Tokens}_{\text{Whole File}}} \times 100\%$$
 
-This assumes the agent would otherwise read the whole file, which it did not do in the pilot session. The saving that is tested (H1 in `eval/PROTOCOL.md`) compares with what the agent really does, measured from Pi's session file in both modes with the same counter (characters / 3.8):
+This assumes the agent would otherwise read the whole file, which it did not do in the pilot session. The exploratory benchmark (H1 in `eval/PROTOCOL.md`) compares with what the agent really does, measured from Pi's session file in both modes with the same counter (characters / 3.8):
 
 $$\text{Code-reading tokens} = \sum_{c \,\in\, \text{code\_read}} \text{Tokens}_{\text{out}}(c) + \sum_{c \,\in\, \text{ACC-MCP}} \text{Tokens}_{\text{out}}(c)$$
 
@@ -103,7 +103,7 @@ together with the number of navigation calls (code reading plus `find_symbol` / 
 
 ---
 
-## 5. Mapping to the 5 Course Building Blocks
+## 5. Mapping to the Course Building Blocks
 
 ### Block 2: Your Own MCP Server
 * **Implementation:** Built using the standard Python `mcp` SDK via stdio transport.
@@ -112,7 +112,7 @@ together with the number of navigation calls (code reading plus `find_symbol` / 
   * `find_symbol(name: str)`: Finds where a class, function, or method is defined in the workspace.
   * `get_token_ledger()`: Returns served tokens per tier and per tool, `escalation_rate`, the session budget, the whole-file upper bound, and recent history with line ranges.
   * `reset_session()`: Starts a fresh session token budget for a new task.
-* **Evidence:** Tool tests in `tests/test_server.py`; a real agent session trace will come from the acc runs of Block 9 (Phase 26).
+* **Evidence:** Tool tests in `tests/test_server.py`, and a real-agent trace: in run `bench1` (acc, task `mi_split_at`), Pi with Qwen3.5-4B called `find_symbol("split_at")` and got `more_itertools/more.py` lines 1569-1610. It then called `get_adaptive_context` and got the verbatim Tier 3 slice (658 tokens of a ~47K-token file), and the run resolved the bug. The quote is in `README.md` Block 2.
 
 ### Block 3: A Rule Enforced in Code
 * **Implementation:** A deterministic safety guardrail implemented in Python before any code is read or served.
@@ -125,7 +125,8 @@ together with the number of navigation calls (code reading plus `find_symbol` / 
 * **Implementation:** A logistic model whose weights are fitted by gradient descent on a train split; the thresholds are hand-picked.
 * **Evaluation:** 100 labeled task intents (29 Tier 1, 31 Tier 2, 40 Tier 3), split 70/30 by tier. Results are reported separately for train and for the 30-task holdout the fit never saw.
 * **Metrics:** 3x3 tier confusion matrix, false alarm rate (served a higher tier than needed), and miss rate (served a lower tier than needed). The holdout numbers are in `README.md`.
-* **Online signal:** in the Block 9 acc runs, a miss shows up as an explicit escalation (the agent raises `min_tier`) or a silent one (after a Tier 1/2 slice the agent reads the same lines itself within 5 tool calls). The online miss rate (explicit + silent) / slices served will be reported next to the holdout numbers; it is not measured yet. Bug fixes mostly need Tier 3, so 4 of the 10 benchmark tasks are call-graph tasks, to exercise Tier 1 and Tier 2 at all.
+* **Uncertainty:** the holdout accuracy of 70.0% has a 95% interval of 52.1–83.3%. It is not significantly better than the hand-picked weights (McNemar p = 1.0), and over 50 random splits it averages 63.7% (Block 8).
+* **Online signal (tooling only):** a miss in real use shows up as an explicit escalation (the agent raises `min_tier`) or a silent one (after a Tier 1/2 slice the agent reads the same lines itself within 5 tool calls); `eval/pi_bench.py` measures both. The one acc trace run had 2 slices, both Tier 3, and no escalation. That is not a rate, so none is claimed.
 
 ### Block 5: Memory or Context Budget Management
 * **Implementation:** A per-session token budget plus a ledger that persists across server restarts.
@@ -133,25 +134,32 @@ together with the number of navigation calls (code reading plus `find_symbol` / 
   * Caps the tokens served per session (20% of the window in the benchmark) and steps down a tier when the chosen one does not fit.
   * Persists the request history (with the line ranges each slice showed), totals per tier and per tool, and the workspace symbol index to a local `context_budget.json` ledger. The whole-file comparison is kept only as an upper bound (section 4.4).
   * Restart test: after a restart the symbol index is rebuilt from the ledger and unchanged files are not parsed again (the file being served is still parsed for each request).
+  * What a restart remembers and costs, from the tests: in the 3-file test workspace a restart re-indexes with 0 parses (3 files reused), or 1 parse after one file is edited. All-time totals and the last 200 history records come back exactly, and the session budget starts full. The agent pays 0 tokens for this memory, because the ledger and symbol cache stay on the server's disk.
 
-### Block 9: A Measured Comparison
-* **Implementation:** Our own bug-fix benchmark run through the Pi coding agent (method in `eval/PROTOCOL.md`, runner `eval/pi_bench.py`). SWE-bench was ruled out because its grader needs a multi-GB Docker image per task; small exercise sets were ruled out because their single small files leave nothing for ACC-MCP to save.
-* **Repositories and tasks:** 10 tasks, each a one-line bug injected into one function of a pinned release of a popular pure-Python library (the SWE-smith approach), graded by that library's own tests:
-  * **more-itertools `v11.2.1`** (https://github.com/more-itertools/more-itertools): 4 tasks in `more_itertools/more.py` (5,644 lines, ~45K tokens, larger than the model's 30,208-token window) and 1 in `recipes.py`: `split_at`, `numeric_range.index`, `sliding_window`, `is_sorted`, `constrained_batches`.
-  * **click `8.5.0`** (https://github.com/pallets/click): 5 tasks across `core.py` (3,799 lines), `types.py`, `parser.py`, `formatting.py`: argument unpacking, `IntRange` minimum, eager-parameter order, `nargs=-1` envvar splitting, `--help` column layout.
-  * 6 tasks are **direct** (the report points at the buggy function); 4 are **call-graph** tasks (`sliding_window`, argument unpacking, eager order, `--help` columns), where the report names a function whose helper has the bug, so Tier 2 (callees) can matter.
-* **Comparison:** every task is done twice by hand in interactive Pi (the operator pastes the bug report and follows fixed rules: no hints, only "Proceed as you think best." / "Continue."), with the same model, prompt, tools, settings and time limit; measurements come from Pi's own session file:
-  * **Baseline:** Plain Pi with Qwen3.5-4B.
-  * **Gated:** Pi with Qwen3.5-4B and ACC-MCP (plus one sentence telling the model to prefer it for reading code).
-* **Grading:** the agent sees only a user-style bug report. After its run the original tests are restored; the task is resolved when the target tests pass and the full suite has no new failures.
-* **Reported Metrics:** resolved or not; navigation calls before the first edit of the target function and code-reading tokens, measured against the agent's own `grep` + windowed `read` strategy; wasted and large reads; peak context of one model call, total prompt tokens, model calls, tools used; tiers served, and explicit (`min_tier`) and silent escalations. Hypotheses H1-H3 are in `eval/PROTOCOL.md` section 1; the pilot session is excluded from the results.
-* **Where:** results go to `eval/results.md`. These runs have not been done yet.
+### Block 7: A Learned Model Compared with Baselines
+* **Implementation:** a multinomial Naive Bayes classifier (`src/acc_mcp/intent_model.py`) that predicts the tier from the words of `task_intent` (Laplace smoothing, log-probabilities, no new dependencies). It targets the main Block 4 error source, the keyword rule, and is evaluated offline only; the server does not use it.
+* **Evaluation:** trained on the Block 4 train split (70 tasks, seed 21) and compared on the same 30 holdout tasks with two baselines: always the most common train tier (Tier 3), and the keyword rule read directly as a tier.
+* **Result:** holdout accuracy is 46.7% for Naive Bayes, 70.0% for the keyword rule and 40.0% for the majority baseline. Naive Bayes overfits (98.6% on its own train tasks) and does **not** beat the keyword rule, which stays in the server. Its most distinctive words (`callers`, `rename`, `fix`, `inspect`, ...) are close to the keyword lists.
+
+### Block 8: Uncertainty on the Holdout
+* **Implementation:** `src/acc_mcp/uncertainty.py` (no new dependencies): Wilson and seeded bootstrap 95% intervals for accuracy, miss rate and false alarm rate; exact McNemar tests and paired bootstrap intervals on the same holdout tasks; and a sweep over 50 stratified splits.
+* **Results:**
+  * Every holdout accuracy interval is about 30 points wide (fitted weights: 70.0%, 52.1–83.3%).
+  * Fitted vs hand-picked weights: +3.3 points, paired interval −20.0 to +26.7, McNemar p = 1.0, so fitting did not measurably help. It traded misses for false alarms.
+  * Naive Bayes vs keyword rule: −23.3 points, paired interval −43.3 to −3.3, McNemar p = 0.065: weak evidence that the keyword rule is better.
+  * Over 50 splits, the mean holdout accuracy is 63.7% for the logistic model, 59.4% for Naive Bayes and 69.2% for the keyword rule alone. Seed 21 was a favourable split for the logistic model.
+* **What the data cannot conclude:** there are 30 holdout tasks, the labels were written by the project author, and train and holdout share code snippets. The numbers describe the models on this dataset only, and differences whose paired interval includes 0 are not evidence.
+
+### Exploratory: Pi Benchmark (not a claimed block)
+* **What it is:** a bug-injection benchmark (`eval/PROTOCOL.md`, `eval/pi_bench.py`) on pinned releases of more-itertools and click. It has 10 tasks (6 direct, 4 call-graph), done by hand in interactive Pi, plain vs ACC-MCP, and graded by the libraries' own tests. It measures navigation calls before the target edit, code-reading tokens, wasted and large reads, peak context, and with ACC-MCP the tiers and explicit and silent escalations.
+* **What exists:** the pilot (plain, `mi_difference`) and one trace pair of `mi_split_at`; both trace runs resolved the bug.
+* **Why it is not claimed:** separating ACC-MCP from run-to-run noise of an unseeded model needs at least 10 tasks × 3 runs per mode (about 60 hand runs). The one `mi_split_at` pair differs by a factor of 9 in model calls (11 plain, 98 acc), mostly because of one wrong first fix, which shows how large that noise is.
 
 ---
 
 ## 6. Verification and Requirements (R1–R4)
 
-* **R1 (It Runs):** Runs inside the Pi coding agent against a local `llama-server` serving Qwen3.5-4B (GGUF) on port 8080, with setup steps in `README.md`. **Pending:** no recorded run in which Pi called ACC-MCP exists yet (Phase 26).
-* **R2 (Automated Tests):** `pytest` suite testing AST parsing, the call graph, decision model outputs, safety gates, the session budget, the MCP tools, and the benchmark's measurement code (navigation metrics, freeze, report).
+* **R1 (It Runs):** Runs inside the Pi coding agent against a local `llama-server` serving Qwen3.5-4B (GGUF) on port 8080, with setup steps in `README.md`. **Verified** by the acc trace run `bench1/acc/mi_split_at`, in which Pi called `find_symbol` and `get_adaptive_context` and resolved the bug (Block 2).
+* **R2 (Automated Tests):** `pytest` suite testing AST parsing, the call graph, decision model outputs, safety gates, the session budget, the MCP tools, the Block 7 intent model, the Block 8 intervals and tests, and the benchmark's measurement code.
 * **R3 (AI-Use Log):** Work session transcripts recorded in `ai_log/` with annotations on prompts refined and manual code corrections.
-* **R4 (Defence Readiness):** Clear, modular code layout with strict separation between AST parsing (`parser.py`), decision model inference (`decision.py`), guardrails (`guard.py`), budget and symbol index (`budget.py`, `index.py`), and MCP endpoints (`server.py`).
+* **R4 (Defence Readiness):** Clear, modular code layout with strict separation between AST parsing (`parser.py`), decision model inference (`decision.py`), the offline intent model and uncertainty analysis (`intent_model.py`, `uncertainty.py`), guardrails (`guard.py`), budget and symbol index (`budget.py`, `index.py`), and MCP endpoints (`server.py`).

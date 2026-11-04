@@ -3,14 +3,14 @@
 **Project:** Adaptive Context Compressor MCP (ACC-MCP / OOM-Guard)  
 **Course:** Coding for AI & Data Science — Final Project (2026–2027)  
 **Target Model:** Qwen3.5-4B (quantized GGUF via `llama-server`; file and quantization recorded per benchmark run)  
-**Building Blocks Implemented:** Block 2, Block 3, Block 4, Block 5, Block 9  
+**Building Blocks Implemented:** Block 2, Block 3, Block 4, Block 5, Block 7, Block 8 (Pi benchmark exploratory)  
 **Requirements Addressed:** R1 (It Runs), R2 (Automated Tests), R3 (AI-Use Log), R4 (Defence Readiness)  
 
 ---
 
 ## 1. Overview and Chronology of AI Collaboration
 
-This document fulfills course requirement **R3 (AI-Use Log)** by recording work sessions, prompt refinements, design decisions, manual code corrections, and debugging interventions. The plan lives in `todo.md` (27 phases). Exported session transcripts are in this folder (`*.md`).
+This document fulfills course requirement **R3 (AI-Use Log)** by recording work sessions, prompt refinements, design decisions, manual code corrections, and debugging interventions. The plan lives in `todo.md` (30 phases). Exported session transcripts are in this folder (`*.md`).
 
 ### Phases 1–10: First build
 
@@ -56,7 +56,17 @@ These phases were planned after the first Pi session (the pilot, plain mode, tas
 | **Phase 24** | Navigation metrics from Pi sessions (Block 9) | `pi_bench.py collect` classifies every tool call (code reading, tests, edits, ACC-MCP, other) and counts output tokens with one counter; navigation calls before the first edit of the target function, wasted and large reads; silent escalations and the online miss rate. Tests use a trimmed copy of the pilot session, checked by hand. | `f5f0c02` |
 | **Phase 25** | Protocol fixes | Click baseline fixed (Correction 6); new hypotheses H1-H3 in `eval/PROTOCOL.md`; one context window (30,208) everywhere with the session budget at 20% of it; 4 of the 10 tasks turned into call-graph tasks and all reports made easier (Refinement 7). | `3bcc93c` |
 | **Phase 26** | Benchmark runs and results | Tooling done: `freeze` records the setup and blocks runs that no longer match it; `report` gives summaries per mode and task kind, ACC-MCP use and the online miss rate, and a paired per-task table. **The counted runs have not been done yet.** | `d52cf62` |
-| **Phase 27** | Documentation for the new framing | README and `Description.md` now describe ACC-MCP as symbol-level navigation measured against `grep` + windowed `read`; whole-file saving only as an upper bound; the online miss rate described next to the holdout result. Numbers that need the Phase 26 runs are marked as not measured. | pending |
+| **Phase 27** | Documentation for the new framing | README and `Description.md` now describe ACC-MCP as symbol-level navigation measured against `grep` + windowed `read`; whole-file saving only as an upper bound; the online miss rate described next to the holdout result. Numbers that need the Phase 26 runs are marked as not measured. | `8ecc7cc` |
+
+### Phases 28–30: Blocks 7 and 8, and the Pi benchmark made exploratory
+
+After the first trace runs the human changed the plan: the counted Pi benchmark (about 60 hand runs) is not done. Instead the project claims Blocks 7 and 8, built on the Block 4 dataset, and keeps the Pi runs as the real-agent trace for R1 and Block 2.
+
+| Phase | Core Objective | What Was Done | Commit |
+| :--- | :--- | :--- | :--- |
+| **Phase 28** | Learned intent classifier vs baselines (Block 7) | Naive Bayes over the words of `task_intent`, trained on the Block 4 train split and compared on the same holdout with the majority tier and the keyword rule. The metric code was moved into `metrics_from_evaluations`, shared with Block 4. See Refinement 8. | `8ecc7cc` |
+| **Phase 29** | Uncertainty on the holdout (Block 8) | Wilson and bootstrap intervals, exact McNemar and paired bootstrap, and a 50-split sensitivity sweep. See Refinement 8. | `8ecc7cc` |
+| **Phase 30** | Claimed blocks and the exploratory benchmark | Documents now claim Blocks 2, 3, 4, 5, 7, 8. Block 9 became an "exploratory, not claimed" note. R1 is verified by the quoted acc trace run, and Block 5 gives its restart numbers from the tests. See Refinement 9. | pending |
 
 ---
 
@@ -114,6 +124,17 @@ These phases were planned after the first Pi session (the pilot, plain mode, tas
 
 ---
 
+### Refinement 8: Report the Learned Model Even When It Loses (Phases 28–29)
+- **Plan:** The human's plan said to put the Naive Bayes holdout numbers in the README "whatever they are (even if Naive Bayes does not beat the keyword rule)".
+- **Result:** Naive Bayes reached 46.7% on the holdout against 70.0% for the keyword rule, and 98.6% on its own train tasks, so it overfits 70 short intents. The keyword rule stays in the server.
+- **What Block 8 changed in the Block 4 story:** the 70.0% of the fitted weights has a 95% interval of 52.1–83.3%. It is not significantly better than the hand-picked weights (McNemar p = 1.0, 7 vs 6 discordant tasks). Over 50 splits it averages 63.7%, below the keyword rule read directly as a tier (69.2%). The README now says so in Block 4 itself, not only in Block 8.
+- **A mixed signal, reported as such:** for Naive Bayes vs the keyword rule, the paired bootstrap interval excludes 0 but the exact McNemar test gives p = 0.065. The documents call this weak evidence and do not pick the more convenient test.
+- **AI mistakes noticed by the AI:** two test counts it reported were wrong (20 and 24 tests instead of 19 and 20), and one expected Wilson bound in a test (0.8337 instead of 0.8334) was corrected before the human ran it.
+
+### Refinement 9: Claim Only What Was Measured (Phase 30)
+- **Human decision:** do not run the 60 hand runs. Claim Blocks 2, 3, 4, 5, 7, 8, and keep the Pi benchmark as exploratory.
+- **AI choice in quoting the trace:** the acc trace of `mi_split_at` is quoted as R1 evidence (Pi called `find_symbol` and `get_adaptive_context` and resolved the bug). The documents also state that this run needed 98 model calls against 11 in the plain trace, because of a wrong first fix, so the quote is not read as a navigation result.
+
 ## 3. Manual Code Corrections & Debugging Annotations
 
 ### Correction 1: Python 3.12 AST Unparse Quote Normalization
@@ -157,7 +178,12 @@ The Phase 10 sign-off reported 110 passing tests, "full coverage", and a 30-run 
 ### Status at Phase 22 (superseded)
 217 tests; holdout accuracy 70.0%; Block 9 and R1 not done.
 
-### Current status (Phase 27)
-- **Test Suite:** 268 tests in 11 test files. The last full run reported by the human (after Phase 24) was 252 passed; the 16 tests added in Phases 25-26 still need a full run.
-- **Decision Model:** holdout accuracy 70.0%, miss rate 14.3%, false alarm rate 33.3% on 30 unseen tasks (see `README.md`). The online miss rate is not measured yet.
-- **Block 9 / R1:** tooling, protocol and tasks are ready; the counted Pi runs (Phase 26) have not been done, so no result is claimed. Before them: re-run `setup` and `validate` (click baseline), commit, then `freeze`.
+### Current status (Phase 30)
+- **Claimed blocks:** 2, 3, 4, 5, 7, 8. The Pi benchmark (`eval/`) is exploratory and not claimed.
+- **Test Suite:** 13 test files. The real count goes into the README badge and the R2 row after the next full run (Step 30.5).
+- **Decision Model (Block 4):** holdout accuracy 70.0% (95% interval 52.1–83.3%), not significantly better than the hand-picked weights; 63.7% on average over 50 splits.
+- **Learned intent model (Block 7):** 46.7% holdout accuracy, below the keyword rule's 70.0%; not used by the server.
+- **R1:** verified by the acc trace run `bench1/acc/mi_split_at`.
+
+### Status at Phase 27 (superseded)
+268 tests counted but not run; the counted Pi runs were still planned.

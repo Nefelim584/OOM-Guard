@@ -1,5 +1,7 @@
 # Pi Benchmark Protocol (Block 9)
 
+> **Status (Phase 30): exploratory, not a claimed course block.** A result needs at least 10 tasks × 3 runs per mode (about 60 hand runs). So far there are only the pilot and trace runs of `mi_split_at`; the acc trace is the real-agent evidence for R1 and Block 2 in `README.md`.
+
 This document is the full method of the project's own benchmark: what is compared, on which repositories and tasks, how each run is carried out and graded, what is measured, and what the results can and cannot show. Every run is done by hand in interactive Pi; the helper script [`pi_bench.py`](pi_bench.py) only prepares a run and measures it afterwards. The tasks are in [`tasks.json`](tasks.json); results go to `results.md`.
 
 ---
