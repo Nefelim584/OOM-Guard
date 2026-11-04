@@ -320,6 +320,73 @@ def test_acc_navigation_metrics(acc_run):
     assert pi_bench.tool_classes(calls)["acc"]["calls"] == 5
 
 
+# ---------------------------------------------------------------------------
+# 4. Protocol fixes (Phase 25)
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_stub_makes_version_lookup_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Verify the stub gives importlib.metadata a version for a src-layout repo without installing code."""
+    import importlib.metadata
+
+    repo = tmp_path / "click"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text('[project]\nname = "click"\nversion = "8.5.0"\n', encoding="utf-8")
+    venv = tmp_path / "venv"
+    site = venv / "lib" / "python3.12" / "site-packages"
+    site.mkdir(parents=True)
+    monkeypatch.setattr(pi_bench, "VENV_DIR", venv)
+
+    stub = pi_bench.write_metadata_stub(repo)
+
+    assert stub == site / "click-8.5.0.dist-info"
+    (dist,) = importlib.metadata.distributions(name="click", path=[str(site)])
+    assert dist.version == "8.5.0"
+    assert sorted(p.name for p in site.iterdir()) == ["click-8.5.0.dist-info"]  # no code
+
+    (repo / "pyproject.toml").write_text('[project]\nname = "x"\ndynamic = ["version"]\n', encoding="utf-8")
+    assert pi_bench.write_metadata_stub(repo) is None
+
+
+def test_validate_fails_when_clean_suite_passes_no_tests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Verify a clean suite with 0 passed tests (e.g. a collection error) makes validate fail."""
+    repos = {"click": {"test_dir": "tests", "pythonpath": "src"}}
+    monkeypatch.setattr(pi_bench, "load_tasks", lambda: {"repos": repos, "tasks": []})
+    monkeypatch.setattr(pi_bench, "WORK_DIR", tmp_path / "work")
+    monkeypatch.setattr(pi_bench, "BASELINE_DIR", tmp_path / "baseline")
+    monkeypatch.setattr(pi_bench, "make_workspace", lambda src, dst, task: dst)
+
+    broken = pi_bench.TestRun(passed=0, failed=1, failed_ids=["::tests.test_deprecations"])
+    monkeypatch.setattr(pi_bench, "run_pytest", lambda *a, **k: broken)
+    assert pi_bench.cmd_validate(None) == 1
+
+    monkeypatch.setattr(pi_bench, "run_pytest", lambda *a, **k: pi_bench.TestRun(passed=765))
+    assert pi_bench.cmd_validate(None) == 0
+
+
+def test_session_budget_is_a_share_of_the_context_window():
+    """Verify the benchmark's ACC-MCP budget is 20% of the window (6,042 for the reference 30,208)."""
+    assert pi_bench.REFERENCE_CONTEXT_WINDOW == 30208
+    assert pi_bench.session_budget_for(30208) == 6042 == pi_bench.DEFAULT_SESSION_BUDGET
+    assert pi_bench.session_budget_for(8192) == 1638
+
+
+def test_tasks_mix_direct_and_call_graph_tasks():
+    """Verify every task says how it is found, and call-graph tasks name the function the report points at."""
+    tasks = pi_bench.load_tasks()["tasks"]
+    assert len(tasks) == 10
+    kinds = {t["id"]: t["kind"] for t in tasks}
+    assert set(kinds.values()) == {"direct", "call_graph"}
+    assert sorted(i for i, k in kinds.items() if k == "call_graph") == [
+        "ck_eager_order", "ck_help_columns", "ck_nargs_tuple", "mi_sliding_window",
+    ]
+    for task in tasks:
+        if task["kind"] == "call_graph":
+            assert task["entry"] != task["symbol"]
+            assert task["entry"].split(".")[-1] in task["problem"]
+            assert task["symbol"] not in task["problem"]  # the report never names the buggy helper
+
+
 def test_old_ledger_without_line_ranges_gives_no_silent_count(acc_run):
     """Verify a pre-Phase 23 ledger reports silent escalations as unknown, not as zero."""
     cwd, calls, ledger = acc_run

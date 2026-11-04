@@ -6,12 +6,15 @@ This document is the full method of the project's own benchmark: what is compare
 
 ## 1. Question
 
-Does giving a small local model ACC-MCP change **whether it can fix a bug in real code** and **how much context it uses doing so**, when the model works inside a real coding agent?
+Does giving a small local model ACC-MCP make it **cheaper to find and read the code it needs**, without making it **worse at fixing the bug**, when the model works inside a real coding agent?
 
-- **H1 (context):** with ACC-MCP, the agent's prompts are smaller (lower peak context per model call and fewer total prompt tokens per task), because it reads signature, call-graph, or single-function slices instead of whole files.
-- **H2 (success):** with ACC-MCP, the agent resolves at least as many tasks as without it, because the slices it gets still contain what it needs.
+The comparison is against what the agent really does without ACC-MCP, not against reading whole files. In the pilot session (section 9) the agent found the function with `grep -n` and read it in 10-100 line windows with `read`; it never loaded the ~45K-token file. So the baseline is the agent's own `grep` + windowed `read` strategy.
 
-Both hypotheses are checked on the same tasks, so each task gives a paired comparison.
+- **H1 (navigation cost):** with ACC-MCP the agent needs **fewer navigation calls** before it edits the target function, and **fewer code-reading tokens** (output of `read`, `grep`, `sed`, ... plus ACC-MCP slices) than with its own `grep` + `read` strategy.
+- **H2 (success):** with ACC-MCP the agent resolves **at least as many** tasks as without it.
+- **H3 (peak context):** with ACC-MCP the largest prompt of a single model call is smaller. This may not change: in the pilot most of the context came from the agent's own Python experiments (`python3 -c ...`), not from reading code, and ACC-MCP does not touch those.
+
+All three are checked on the same tasks, so each task gives a paired comparison. The metrics behind them are defined in section 8.
 
 ---
 
@@ -36,10 +39,10 @@ What the comparison needs is **real, popular code with files large enough that r
 | License | MIT | BSD-3-Clause |
 | What it is | Extra iterator building blocks on top of `itertools` | Command-line interface framework (Pallets) |
 | Runtime dependencies | none | none (on macOS/Linux) |
-| Package layout | `more_itertools/` at the repo root | `src/click/` (tests need `PYTHONPATH=src`) |
+| Package layout | `more_itertools/` at the repo root | `src/click/` (tests need `PYTHONPATH=src`, plus a metadata-only install, section 4.3) |
 | Test suite | `tests/`, `unittest.TestCase` classes, run with pytest | `tests/`, plain pytest |
-| Files with injected bugs | `more_itertools/more.py`: 5,644 lines, ~175 KB | `src/click/core.py`: 3,799 lines; `types.py`: 1,422; `parser.py`: 533; `formatting.py`: 320 |
-| Why chosen | `more.py` is about 45K tokens, **larger than the model's ~30K context window**: the agent cannot read it whole and has to find the right function. Hundreds of small, independent functions. | Real class hierarchy (`Command`, `Parameter`, `Option`, `HelpFormatter`) with code split across modules, so callers and callees matter (Tier 2). `core.py` alone is also larger than a comfortable read. |
+| Files with injected bugs | `more_itertools/more.py`: 5,644 lines, ~175 KB; `recipes.py` | `src/click/core.py`: 3,799 lines; `types.py`: 1,422; `parser.py`: 533; `formatting.py`: 320 |
+| Why chosen | `more.py` is about 45K tokens, **larger than the model's 30,208-token context window**: the agent cannot read it whole and has to find the right function. Hundreds of small, independent functions. | Real class hierarchy (`Command`, `Parameter`, `Option`, `HelpFormatter`) with code split across modules, so callers and callees matter (Tier 2). `core.py` alone is also larger than a comfortable read. |
 
 Both repos are cloned shallowly at the pinned tag (`setup`). Sizes are for these tags.
 
@@ -52,34 +55,41 @@ Both repos are cloned shallowly at the pinned tag (`setup`). Sizes are for these
 1. Pick a function in one of the files above that has its own tests in the repository.
 2. Change **one line or one condition** so the function gives wrong results but the code still imports and runs: a swapped argument order, an off-by-one comparison, a flipped condition.
 3. Spread the tasks through the files (start, middle, end of `more.py`; four different click modules), so no task is solved by reading the first lines of a file.
-4. Write a **bug report** the way a user would file it: what they called, what they got, what they expected. Reports for more-itertools name the public function, as a user would. Reports for click describe only the user-visible behavior and never name the internal function. No report mentions a file, a line, or the code change.
+4. Write a **bug report**: what was called, what came out, what was expected, with a small example. Reports for more-itertools name the public function. Reports for click name the public API involved and the module (`src/click/<module>.py`), but not the buggy function. No report mentions a line or the code change. The reports were made easier after the pilot (Phase 25), because the 4B model struggled with vaguer ones even at Q6.
 5. Record the tests that cover the function as the task's **target tests**.
 6. Check with `validate` that the target tests pass on the original code and fail with the bug (section 4.3).
 
+There are two kinds of task (`kind` in `tasks.json`):
+
+- **`direct`** (6 tasks): the report names or clearly points at the function that has the bug. The agent has to find it in a large file and fix it.
+- **`call_graph`** (4 tasks): the report names an **entry** function (`entry` in `tasks.json`) that behaves wrongly, but the bug is in a helper that the entry function calls. The report says so ("the function only chooses a helper", "the order comes from a helper"), but never names the helper. The agent has to follow the call graph from the entry function to the helper. These tasks exist because in bug fixes where the report points at the function itself, the decision model almost always picks Tier 3, so Tier 1 and Tier 2 (signatures and callees) would barely be exercised.
+
 ### 4.2 Task catalogue
 
-| Task | Repo | File (line) | Function | Injected change | Target tests | Bug report (summary) |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `mi_split_at` | more-itertools | `more.py` (1600) | `split_at` | `if maxsplit == 1:` → `if maxsplit == 2:` | `SplitAtTests` | `maxsplit=2` splits only once; `maxsplit=1` never stops |
-| `mi_numeric_range_index` | more-itertools | `more.py` (2476) | `numeric_range.index` | `self._start >= value > self._stop` → `self._start > value > self._stop` | `NumericRangeTests` | `.index()` of the first item of a decreasing range raises `ValueError` |
-| `mi_difference` | more-itertools | `more.py` (2940) | `difference` | `map(func, b, a)` → `map(func, a, b)` | `DifferenceTest` | differences come out negated / wrong for custom functions |
-| `mi_is_sorted` | more-itertools | `more.py` (4079) | `is_sorted` | strict and non-strict checks swapped | `IsSortedTests` | `is_sorted([1, 2, 2])` is `False`, with `strict=True` it is `True` |
-| `mi_constrained_batches` | more-itertools | `more.py` (4981) | `constrained_batches` | `> max_size` → `>= max_size` | `ConstrainedBatchesTests` | items that exactly fill `max_size` are split into two batches |
-| `ck_nargs_tuple` | click | `parser.py` (90) | `_unpack_args` | `if spos is not None:` → `if spos is None:` before `x.reverse()` | `test_arguments.py::test_nargs_tup` | `nargs=2` arguments arrive reversed |
-| `ck_int_range_min` | click | `types.py` (664) | `_NumberRangeBase.convert` | `operator.le if self.min_open else operator.lt` → the two operators swapped | `test_types.py::test_range` | `IntRange(5)` rejects `5`; `min_open=True` accepts the bound |
-| `ck_eager_order` | click | `core.py` (164) | `iter_params_for_processing` | `return not item.is_eager, idx` → `return item.is_eager, idx` | `test_commands.py::test_iter_params_for_processing` | eager options (`--version`, `--help`) run after normal ones |
-| `ck_envvar_nargs` | click | `core.py` (2725) | `Parameter.value_from_envvar` | `self.nargs != 1` → `self.nargs > 1` | `test_arguments.py::test_nargs_envvar` | a `nargs=-1` argument no longer splits its environment variable |
-| `ck_help_columns` | click | `formatting.py` (255) | `HelpFormatter.write_dl` | `term_len(first) <= ...` → `term_len(first) < ...` | `test_formatting.py` | in `--help`, the longest option's description wraps to the next line |
+| Task | Kind | Repo | File (line) | Function with the bug | Entry named in the report | Injected change | Target tests | Bug report (summary) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `mi_split_at` | direct | more-itertools | `more.py` (1600) | `split_at` | | `if maxsplit == 1:` → `if maxsplit == 2:` | `SplitAtTests` | `maxsplit=2` splits only once; `maxsplit=1` never stops |
+| `mi_numeric_range_index` | direct | more-itertools | `more.py` (2476) | `numeric_range.index` | | `self._start >= value > self._stop` → `self._start > value > self._stop` | `NumericRangeTests` | `.index()` of the first item of a decreasing range raises `ValueError` |
+| `mi_sliding_window` | call_graph | more-itertools | `recipes.py` (798) | `_sliding_window_deque` | `sliding_window` | `maxlen=n` → `maxlen=n - 1` | `test_recipes.py::SlidingWindowTests` | windows of `n > 20` are one item short; `sliding_window` only picks a helper |
+| `mi_is_sorted` | direct | more-itertools | `more.py` (4079) | `is_sorted` | | strict and non-strict checks swapped | `IsSortedTests` | `is_sorted([1, 2, 2])` is `False`, with `strict=True` it is `True` |
+| `mi_constrained_batches` | direct | more-itertools | `more.py` (4981) | `constrained_batches` | | `> max_size` → `>= max_size` | `ConstrainedBatchesTests` | items that exactly fill `max_size` are split into two batches |
+| `ck_nargs_tuple` | call_graph | click | `parser.py` (90) | `_unpack_args` | `_OptionParser.parse_args` | `if spos is not None:` → `if spos is None:` before `x.reverse()` | `test_arguments.py::test_nargs_tup` | `nargs=2` arguments arrive reversed; values are split in `parser.py` |
+| `ck_int_range_min` | direct | click | `types.py` (664) | `_NumberRangeBase.convert` | | `operator.le if self.min_open else operator.lt` → the two operators swapped | `test_types.py::test_range` | `IntRange(5)` rejects `5`; `min_open=True` accepts the bound |
+| `ck_eager_order` | call_graph | click | `core.py` (164) | `iter_params_for_processing` | `Command.parse_args` | `return not item.is_eager, idx` → `return item.is_eager, idx` | `test_commands.py::test_iter_params_for_processing` | eager options run after normal ones; `parse_args` gets the order from a helper |
+| `ck_envvar_nargs` | direct | click | `core.py` (2725) | `Parameter.value_from_envvar` | | `self.nargs != 1` → `self.nargs > 1` | `test_arguments.py::test_nargs_envvar` | a `nargs=-1` argument no longer splits its environment variable |
+| `ck_help_columns` | call_graph | click | `formatting.py` (19) | `measure_table` | `HelpFormatter.write_dl` | `max(widths.get(idx, 0), term_len(col))` → `term_len(col)` | `test_formatting.py` | names longer than the last entry wrap; `write_dl` gets column widths from a helper |
 
-Exact before/after strings and full bug reports are in `tasks.json`. more-itertools test classes are in `tests/test_more.py`.
+Exact before/after strings and full bug reports are in `tasks.json`. more-itertools test classes are in `tests/test_more.py` and `tests/test_recipes.py`. Changes in Phase 25: `mi_difference` (used for the pilot) was replaced by `mi_sliding_window`; `ck_help_columns` moved its bug from `write_dl` into the helper `measure_table`; `ck_nargs_tuple` and `ck_eager_order` kept their bugs but their reports now name the entry function and module.
 
 ### 4.3 Validation (before any run)
 
 `python3 eval/pi_bench.py validate`:
-1. Runs each repository's full test suite on the clean code and stores the failing tests, if any, as the **baseline** (`eval/work/baseline/<repo>.json`). These are not counted against the agent later.
+1. Runs each repository's full test suite on the clean code and stores the failing tests, if any, as the **baseline** (`eval/work/baseline/<repo>.json`). These are not counted against the agent later. **A clean suite that passes 0 tests fails validation**, because then the "no new failures" check in section 7 would compare against nothing.
 2. For each task, checks that the "before" string occurs exactly once in the file, that the target tests pass on the clean code, and that at least one target test fails with the bug.
 
 A task that fails validation is fixed or dropped before running the benchmark.
+
+**Click baseline fix (Phase 25).** Before this fix the clean click suite passed 0 tests: `tests/test_deprecations.py` calls `importlib.metadata.version("click")` while pytest collects it, and click is imported through `PYTHONPATH=src` instead of being installed, so the call raised `PackageNotFoundError` and pytest stopped the whole run. `setup` now writes a **metadata-only** `click-8.5.0.dist-info` (name and version, no code) into the test venv. Version lookups work, and click is still imported only from the workspace, so the tests always run the agent's version of the code.
 
 ---
 
@@ -92,7 +102,7 @@ Each task runs once in each of two modes. The **only** differences between the m
 | Item | Value |
 | :--- | :--- |
 | Model | Qwen3.5-4B GGUF served by `llama-server` at `http://127.0.0.1:8080`. The exact file is printed by `doctor` and must be recorded with the results. |
-| Context window | per-slot `n_ctx` read from `llama-server /props` (30,208 on the reference machine), given to Pi as the model's `contextWindow` |
+| Context window | **30,208 tokens**: the per-slot `n_ctx` that `llama-server /props` reports on the reference machine, given to Pi as the model's `contextWindow`. `prepare` reads it from the server and records it in `run.json`; if the server cannot be reached it assumes 30,208 and prints a warning. The same number is used in `README.md` and `Description.md`. |
 | Max output per call | 4,096 tokens |
 | Agent | Pi coding agent in its normal **interactive** terminal UI, opened by the operator with the task's `start.sh` |
 | Tools | Pi's defaults: `read`, `bash`, `edit`, `write` |
@@ -107,7 +117,7 @@ Each task runs once in each of two modes. The **only** differences between the m
 ### 5.2 The treatment (acc mode only)
 
 - ACC-MCP is started by Pi as a stdio MCP server (`.venv/bin/python -m acc_mcp.server`) with `direct` exposure, so its tools are declared to the model like built-in tools: `mcp__acc_mcp__get_adaptive_context`, `mcp__acc_mcp__find_symbol`, `mcp__acc_mcp__get_token_ledger`, `mcp__acc_mcp__reset_session`.
-- `ACC_MCP_ROOT` = the task workspace; `ACC_MCP_LEDGER` = a per-run file outside the workspace; session budget 6,000 tokens.
+- `ACC_MCP_ROOT` = the task workspace; `ACC_MCP_LEDGER` = a per-run file outside the workspace; session budget = **20% of the context window** (6,042 tokens for 30,208), so ACC-MCP slices can never fill more than a fifth of the window. `prepare --session-budget N` overrides it.
 - One sentence is appended to the system prompt (`ACC_HINT` in `pi_bench.py`): prefer `find_symbol` and `get_adaptive_context` over reading whole files, and call again with `min_tier=3` if a slice is not enough.
 - The built-in tools stay available, so the agent can always fall back to `read` and `bash`.
 
@@ -153,30 +163,54 @@ Also recorded: whether the agent changed the file that contains the bug, which f
 
 ## 8. Metrics
 
+All metrics come from files written during the run (Pi's session file, the ACC-MCP ledger, the test results), so measuring costs the operator nothing. `collect` computes them and stores them in `result.json`.
+
+**Navigation (H1).** Every tool call is put in one class: **code_read** (Pi's `read`, `grep`, `find`, `ls`, and bash commands whose pipeline starts with `grep`, `rg`, `sed`, `cat`, `head`, `tail`, `awk`, `nl`, `find` or `ls`), **acc** (any ACC-MCP tool), **test_run** (`pytest`, `python -m pytest`/`unittest`, `tox`, `nox`), **edit** (`edit`, `write`, `sed -i`), and **other** (everything else, mostly the agent's own Python experiments). Output tokens are counted with **one counter for both modes**, characters / 3.8, so plain and acc numbers are directly comparable. The target function's line range is read with `ast` from the clean repository.
+
 | Metric | Definition | Source |
 | :--- | :--- | :--- |
-| Resolved | section 7 | test runs |
-| Model calls | number of assistant responses (one per agent step) | Pi session file (`sessions/*.jsonl`), assistant messages |
-| Peak context | largest prompt of a single model call: input + cache-read + cache-write tokens, as llama-server reports them to Pi. Directly comparable to the context window. | `usage` of each assistant message |
+| Navigation calls before the target edit | code_read calls plus ACC-MCP `find_symbol` / `get_adaptive_context` calls made before the first edit that changes a line of the target function (edited lines come from Pi's edit patch). Empty if the target was never edited. **Primary H1 metric.** | session file + clean repo |
+| Code-reading tokens | output tokens of code_read calls plus ACC-MCP slices (`acc`). **Primary H1 metric.** | session file |
+| Tokens per class | output tokens of code_read, acc, test_run, edit, other calls | session file |
+| Read windows / wasted reads | windows the agent read itself (`read` offset..offset+limit, `sed -n a,bp`, `head`, `cat`); wasted = windows that do not overlap the target function, including any other file | session file + clean repo |
+| Large reads | single code_read or acc calls that returned more than 4,000 tokens: measures whether the agent really reads whole files instead of assuming it | session file |
+
+**Context and effort (H3).**
+
+| Metric | Definition | Source |
+| :--- | :--- | :--- |
+| Peak context | largest prompt of a single model call: input + cache-read + cache-write tokens, as llama-server reports them to Pi. Directly comparable to the 30,208-token window. **Primary H3 metric.** | `usage` of each assistant message |
 | Total prompt tokens | sum of the prompt sizes over all calls: how much context the model processed for the whole task | same |
-| Output tokens | tokens generated | same |
+| Model calls, output tokens | assistant responses and tokens generated | same |
 | Tool calls / tool output | number of calls and characters returned, per tool | tool-result messages in the session |
 | Compactions | times Pi had to summarize the conversation to stay in the window | compaction entries in the session |
 | Operator messages | messages the operator sent (1 = only the prompt) | user messages in the session |
 | Minutes | time from the first to the last message | session timestamps |
-| Operator notes | what the operator observed and why the run stopped | `collect --notes` |
-| ACC-MCP requests, tiers | requests served and their tier (1/2/3), and the tier the decision model picked | ACC-MCP ledger |
-| Escalations | requests where the agent raised `min_tier` above the model's tier | ACC-MCP ledger |
+
+**Success (H2).** Resolved (section 7), whether the buggy file was edited, whether tests were edited, and the operator's notes (`collect --notes`).
+
+**ACC-MCP (acc mode only).**
+
+| Metric | Definition | Source |
+| :--- | :--- | :--- |
+| Requests, tiers | slices served, their tier (1/2/3), and the tier the decision model picked | ACC-MCP ledger |
+| Explicit escalations | requests where the agent raised `min_tier` above the model's tier | ACC-MCP ledger |
+| Silent escalations | Tier 1 or Tier 2 slices after which the agent read some of the same lines itself (`read`, `sed -n`, `head`, `cat`) within the next 5 tool calls: the slice was not enough, but the agent did not say so through `min_tier` | ledger line ranges + session file |
+| Online miss rate | (explicit + silent escalations) / slices served: the decision model's miss rate on real use, next to its offline holdout result (Block 4) | both |
 | Budget step-downs / refusals | slices served one tier lower, or refused, because the session budget was nearly used up | ledger and tool output |
-| ACC-MCP tokens vs whole file | tokens served vs tokens of the whole files those slices came from | ACC-MCP ledger |
+| Whole-file tokens | tokens of the whole files the slices came from. **An upper bound only**: agents read windows, not whole files, so this is not a measured saving and is not used for any hypothesis. | ACC-MCP ledger |
 
 ---
 
 ## 9. Analysis
 
-- **Per mode:** resolved count out of 10, and the median of peak context, total prompt tokens, model calls and wall time.
-- **Per task (paired):** the same task in both modes, side by side in `results.md`, so a difference can be traced to what the agent did (tools used, tiers served, escalations).
+- **Pilot excluded.** The pilot session (`eval/work/runs/run1/plain/mi_difference`) was run before the metrics, the click baseline and the tasks were fixed, and `mi_difference` is no longer a task. It informed the hypotheses and is the fixture for the metric tests, but it is **not part of the results**. Counted runs use the run id `bench1` (the default), so `report` never reads `run1`.
+- **H1 per mode:** median navigation calls before the target edit and median code-reading tokens. **H2:** resolved count out of 10. **H3:** median peak context. Also the median total prompt tokens, model calls and minutes.
+- **Per task (paired):** the same task in both modes, side by side in `results.md`, so a difference can be traced to what the agent did (tools used, tiers served, wasted reads, escalations). With one run per task and mode, the per-task difference is the main evidence; medians only summarize it.
+- **Per kind:** `direct` and `call_graph` tasks are also summarized separately, because ACC-MCP's Tier 2 (callees with their signatures) can only help on the second kind.
 - **Was ACC-MCP used at all?** The number of acc runs in which the model actually called an ACC-MCP tool. If a 4B model ignores the tools, the acc runs measure Pi alone, and that is itself a result.
+- **Decision model online:** explicit and silent escalations and the online miss rate, over all acc runs, next to the offline holdout numbers.
+- **Did the agent read whole files?** The large-read count in plain mode. If it is 0, the whole-file comparison is irrelevant for this agent and is reported only as an upper bound.
 - With 10 tasks and one run each, a difference of one or two resolved tasks is within noise. To see the spread, repeat the whole run with a new `--run-id` and report each run, not only the best.
 - Results are reported as they come out, including if ACC-MCP makes things worse.
 
@@ -185,12 +219,14 @@ Also recorded: whether the agent changed the file that contains the bug, which f
 ## 10. Threats to validity
 
 - **Small sample:** 10 tasks, one run per task and mode by default.
-- **Injected bugs:** single-line changes are easier to localize than real bugs and may not represent real maintenance work. The reports were written by the project author.
+- **Injected bugs:** single-line changes are easier to localize than real bugs and may not represent real maintenance work. The reports were written by the project author, and after the pilot they were made easier on purpose (module names for click, a pointer to the helper in `call_graph` tasks), so the success rate is not comparable to benchmarks with real bug reports.
+- **Few call-graph tasks:** 4 of the 10 tasks need call-graph navigation; in the other 6 the decision model will mostly pick Tier 3, so Tier 1 and Tier 2 are exercised by a small number of runs.
+- **Navigation metrics are heuristics:** bash commands are classified by their first program, `tail` and `awk` give no line window, and an edit above the target function can shift the line numbers of later edits a little.
 - **Training data:** both libraries are popular and likely in the model's training data, so the model may recognize the code. This affects both modes equally but can inflate the success rate.
 - **Sampling:** the model's sampling is not seeded; reruns differ.
 - **Operator effect:** a person runs Pi and decides when to stop. The operator rules (6.1) limit this, and every extra message is counted, but the operator knows the bug and could steer unconsciously. Ideally the operator does not read the injected change in `tasks.json` before running.
 - **Hint confound:** acc mode adds one instruction sentence; `--no-hint` runs separate its effect from the tools'.
-- **Token accounting:** context numbers are what llama-server reports to Pi. ACC-MCP's own counts use a different tokenizer (tiktoken or a character estimate), so its tokens and Pi's are compared only within their own source.
+- **Token accounting:** context numbers are what llama-server reports to Pi. Navigation tokens use characters / 3.8 for both modes. ACC-MCP's own ledger uses tiktoken, so ledger tokens, navigation tokens and Pi's context are each compared only within their own source.
 - **One machine, one model:** results hold for this model file, quantization and context size.
 
 ---
@@ -203,21 +239,21 @@ One-time preparation:
 
 ```bash
 uv sync                                   # ACC-MCP must be importable from .venv
-python3 eval/pi_bench.py setup            # clone both repos at their tags, create eval/work/venv
-python3 eval/pi_bench.py validate         # baseline + all 10 tasks must be OK
+python3 eval/pi_bench.py setup            # clone both repos at their tags, create eval/work/venv, click metadata stub
+python3 eval/pi_bench.py validate         # both clean suites pass > 0 tests, all 10 tasks OK
 python3 eval/pi_bench.py doctor           # model, Pi version; acc-mcp must be connected with 4 tools
 ```
 
 For each task, plain first, then acc:
 
 ```bash
-python3 eval/pi_bench.py prepare mi_difference --mode plain     # prints the next steps and the prompt
-bash eval/work/runs/run1/plain/mi_difference/start.sh           # interactive Pi; paste the prompt; quit when done
-python3 eval/pi_bench.py collect mi_difference --mode plain --notes "found it with grep, fixed in 6 steps"
+python3 eval/pi_bench.py prepare mi_split_at --mode plain       # prints the next steps and the prompt
+bash eval/work/runs/bench1/plain/mi_split_at/start.sh           # interactive Pi; paste the prompt; quit when done
+python3 eval/pi_bench.py collect mi_split_at --mode plain --notes "found it with grep, fixed in 6 steps"
 
-python3 eval/pi_bench.py prepare mi_difference --mode acc
-bash eval/work/runs/run1/acc/mi_difference/start.sh
-python3 eval/pi_bench.py collect mi_difference --mode acc --notes "..."
+python3 eval/pi_bench.py prepare mi_split_at --mode acc
+bash eval/work/runs/bench1/acc/mi_split_at/start.sh
+python3 eval/pi_bench.py collect mi_split_at --mode acc --notes "..."
 ```
 
 Progress and results:

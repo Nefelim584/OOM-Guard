@@ -15,7 +15,7 @@
 
 ## 1. Executive Summary & Problem Formulation
 
-Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project assumes 8,192 tokens). A coding agent that reads whole source files into that window fills it quickly:
+Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project uses 30,208 tokens, the per-slot window `llama-server` reports on the reference machine). A coding agent that reads whole source files into that window fills it quickly:
 1. **Context bloat:** a full window leaves less room for the task, and an overfull request fails outright.
 2. **Token waste:** many questions (checking a signature, a type hint, or who calls a function) need only the interface, not the function bodies.
 
@@ -151,7 +151,7 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
 - The real-world signal is `escalation_rate` in `get_token_ledger`: the share of requests where the agent had to raise `min_tier` above the model's choice because the slice it got was not enough.
 
 ### Block 5: Memory or Context Budget Management (`src/acc_mcp/budget.py`, `src/acc_mcp/index.py`)
-- **Session Budget:** All slices in a session share a token budget (`ACC_MCP_SESSION_BUDGET`, default 6,000 tokens). Each slice is cut to $\min(C_{\max}, \text{tokens left})$. If the chosen tier does not fit, the server serves one tier lower and says so in a `# [ACC-MCP] Served Tier n instead of Tier m` note; a tier forced with `min_tier` that does not fit is refused with a `# [ACC-MCP] Not served` message. `reset_session` starts a new budget.
+- **Session Budget:** All slices in a session share a token budget (`ACC_MCP_SESSION_BUDGET`, default 6,000 tokens, about 20% of the 30,208-token window; the benchmark sets exactly 20%, 6,042). Each slice is cut to $\min(C_{\max}, \text{tokens left})$. If the chosen tier does not fit, the server serves one tier lower and says so in a `# [ACC-MCP] Served Tier n instead of Tier m` note; a tier forced with `min_tier` that does not fit is refused with a `# [ACC-MCP] Not served` message. `reset_session` starts a new budget.
 - **Ledger:** Every request is recorded with its served tier, model tier, `min_tier`, and token counts. Savings per request are measured against reading the whole file:
   $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{\text{Served Tier}}}{\text{Tokens}_{\text{Full File}}} \times 100\%$$
   The ledger is saved once per request to the file named by `ACC_MCP_LEDGER`, or to `context_budget.json` in the server's working directory. Totals cover all requests; the history keeps only the last 200 records.
@@ -166,14 +166,14 @@ When context is requested, ACC-MCP renders the target symbol (or the whole file)
 
   | Repo | Pinned release | Files with injected bugs | Why |
   | :--- | :--- | :--- | :--- |
-  | [more-itertools](https://github.com/more-itertools/more-itertools) | `v11.2.1` | `more_itertools/more.py` (5,644 lines, ~175 KB) | One file of ~45K tokens, larger than the model's ~30K window, so the agent must find the right function. |
+  | [more-itertools](https://github.com/more-itertools/more-itertools) | `v11.2.1` | `more_itertools/more.py` (5,644 lines, ~175 KB), `recipes.py` | One file of ~45K tokens, larger than the model's 30,208-token window, so the agent must find the right function. |
   | [click](https://github.com/pallets/click) | `8.5.0` | `src/click/core.py` (3,799 lines), `types.py`, `parser.py`, `formatting.py` | Classes and methods spread over modules, so callers and callees matter. |
 
-- **Tasks (5 per repo):** each changes one line or condition in one function that has its own tests: `split_at`, `numeric_range.index`, `difference`, `is_sorted`, `constrained_batches` (more-itertools); argument unpacking, `IntRange` minimum, eager-parameter order, `nargs=-1` envvar splitting, `--help` column layout (click). The agent gets only a user-style bug report, never the file or line, in a fresh repo whose only commit already contains the bug. Each change, its target tests and its report are listed in the protocol.
+- **Tasks (5 per repo):** each changes one line or condition in one function that has its own tests: `split_at`, `numeric_range.index`, `sliding_window`, `is_sorted`, `constrained_batches` (more-itertools); argument unpacking, `IntRange` minimum, eager-parameter order, `nargs=-1` envvar splitting, `--help` column layout (click). 6 tasks are **direct** (the report points at the buggy function) and 4 are **call-graph** tasks (the report names a function whose helper has the bug, so the agent has to follow its callees). The agent gets only a bug report, never the line, in a fresh repo whose only commit already contains the bug. Each change, its target tests and its report are listed in the protocol.
 - **How a run is done:** by hand, in normal interactive Pi. For each task and mode, `prepare` builds the broken repo and a `start.sh` that opens Pi with an isolated configuration; the operator pastes the bug report, watches the model work under fixed operator rules (no hints; only "Proceed as you think best." / "Continue."), and quits when it is done or stuck. `collect` then reads Pi's own session file for the measurements and runs the repo's tests to check the fix.
 - **Conditions:** every task is done twice with the same model, prompt, tools, compaction settings, operator rules and time limit. Only the acc run adds the ACC-MCP server (tools declared directly) and one sentence telling the model to prefer it for reading code.
 - **Grading:** after restoring the original tests, a task is resolved when the target tests pass and the full suite has no failures beyond those of the clean repo.
-- **Measured per run:** resolved or not, peak context of one model call, total prompt tokens, model calls, output tokens, tools used, compactions, wall time, and (with ACC-MCP) tiers served, `min_tier` escalations and budget step-downs.
+- **Measured per run:** resolved or not; navigation calls before the first edit of the target function, code-reading tokens, wasted reads and large reads (the agent's own `grep` + windowed `read` strategy is the baseline, not reading whole files); peak context of one model call, total prompt tokens, model calls, tools used, compactions, wall time; and (with ACC-MCP) tiers served, explicit and silent escalations, and budget step-downs.
 - **Helper script:** [`eval/pi_bench.py`](eval/pi_bench.py) (`setup`, `validate`, `doctor`, `prepare`, `collect`, `list`, `report`). It never drives Pi itself.
 - **Status: not run yet.** Results will go to `eval/results.md`; until then this README makes no claim about token savings or task success.
 - An earlier simulated benchmark was removed: it marked every gated run as a success without checking the model's answer, and one generated file produced most of its reported saving.
@@ -232,12 +232,12 @@ uv run python src/acc_mcp/evaluate_decision.py
 ### 1. Serve Qwen3.5-4B with `llama-server` (`llama.cpp`)
 ```bash
 # With a GGUF you already have
-llama-server -m /path/to/Qwen3.5-4B-Q4_K_M.gguf -c 8192 --port 8080
+llama-server -m /path/to/Qwen3.5-4B-Q4_K_M.gguf -c 30208 --parallel 1 --port 8080
 
 # Or let llama.cpp fetch it from Hugging Face
-llama-server -hf unsloth/Qwen3.5-4B-GGUF:Q4_K_M -c 8192 --port 8080
+llama-server -hf unsloth/Qwen3.5-4B-GGUF:Q4_K_M -c 30208 --parallel 1 --port 8080
 ```
-This gives an OpenAI-compatible endpoint at `http://127.0.0.1:8080/v1`.
+This gives an OpenAI-compatible endpoint at `http://127.0.0.1:8080/v1`. Check the window with `curl -s http://127.0.0.1:8080/props`: `default_generation_settings.n_ctx` should be 30,208; the benchmark reads it from there.
 
 ### Pi coding agent
 Pi (1.0.2+) has built-in MCP support. Register ACC-MCP for the project the agent works on:

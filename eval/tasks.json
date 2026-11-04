@@ -17,6 +17,7 @@
     {
       "id": "mi_split_at",
       "repo": "more-itertools",
+      "kind": "direct",
       "file": "more_itertools/more.py",
       "symbol": "split_at",
       "old": "            yield buf\n            if keep_separator:\n                yield [item]\n            if maxsplit == 1:",
@@ -27,6 +28,7 @@
     {
       "id": "mi_numeric_range_index",
       "repo": "more-itertools",
+      "kind": "direct",
       "file": "more_itertools/more.py",
       "symbol": "numeric_range.index",
       "old": "            if self._start >= value > self._stop:",
@@ -35,18 +37,21 @@
       "problem": "`numeric_range.index` fails for the first item of a decreasing range. `numeric_range(7.0, 0.0, -1.0).index(7.0)` raises `ValueError: 7.0 is not in numeric range`, although `7.0 in numeric_range(7.0, 0.0, -1.0)` is `True` and it is the first item. It should return `0`. Increasing ranges are fine."
     },
     {
-      "id": "mi_difference",
+      "id": "mi_sliding_window",
       "repo": "more-itertools",
-      "file": "more_itertools/more.py",
-      "symbol": "difference",
-      "old": "    return chain(first, map(func, b, a))",
-      "new": "    return chain(first, map(func, a, b))",
-      "tests": ["tests/test_more.py::DifferenceTest"],
-      "problem": "`more_itertools.difference` returns wrong values. `list(difference([0, 1, 3, 6, 10]))` gives `[0, -1, -2, -3, -4]` instead of `[0, 1, 2, 3, 4]`, and with a custom function, `list(difference([1, 2, 6, 24, 120], lambda x, y: x // y))` gives `[1, 0, 0, 0, 0]` instead of `[1, 2, 3, 4, 5]`."
+      "kind": "call_graph",
+      "file": "more_itertools/recipes.py",
+      "symbol": "_sliding_window_deque",
+      "entry": "sliding_window",
+      "old": "    window = deque(islice(iterator, n - 1), maxlen=n)",
+      "new": "    window = deque(islice(iterator, n - 1), maxlen=n - 1)",
+      "tests": ["tests/test_recipes.py::SlidingWindowTests"],
+      "problem": "`more_itertools.sliding_window` returns windows that are one item too short when the window is large. `list(sliding_window(range(30), 25))` should start with `(0, 1, ..., 24)` (25 items), but the first window is `(1, 2, ..., 24)` with only 24 items, and every other window is also one item short. Small windows are correct: `list(sliding_window(range(6), 4))` gives `[(0, 1, 2, 3), (1, 2, 3, 4), (2, 3, 4, 5)]`. `sliding_window` itself only chooses a helper function depending on `n`; the problem appears only for `n > 20`."
     },
     {
       "id": "mi_is_sorted",
       "repo": "more-itertools",
+      "kind": "direct",
       "file": "more_itertools/more.py",
       "symbol": "is_sorted",
       "old": "    return all(map(lt, a, b)) if strict else not any(map(lt, b, a))",
@@ -57,6 +62,7 @@
     {
       "id": "mi_constrained_batches",
       "repo": "more-itertools",
+      "kind": "direct",
       "file": "more_itertools/more.py",
       "symbol": "constrained_batches",
       "old": "        reached_size = item_len + batch_size > max_size",
@@ -67,52 +73,60 @@
     {
       "id": "ck_nargs_tuple",
       "repo": "click",
+      "kind": "call_graph",
       "file": "src/click/parser.py",
       "symbol": "_unpack_args",
+      "entry": "_OptionParser.parse_args",
       "old": "            if spos is not None:\n                x.reverse()",
       "new": "            if spos is None:\n                x.reverse()",
       "tests": ["tests/test_arguments.py::test_nargs_tup"],
-      "problem": "Click arguments with `nargs=2` (or more) receive their values in reverse order. With `@click.argument(\"point\", nargs=2, type=int)`, running `cli 1 2` gives `point == (2, 1)` instead of `(1, 2)`."
+      "problem": "Click arguments with `nargs=2` (or more) receive their values in reverse order. With `@click.argument(\"point\", nargs=2, type=int)`, running `cli 1 2` gives `point == (2, 1)` instead of `(1, 2)`. Positional arguments are split into their values by the argument parser in `src/click/parser.py` (`_OptionParser.parse_args` and the functions it calls)."
     },
     {
       "id": "ck_int_range_min",
       "repo": "click",
+      "kind": "direct",
       "file": "src/click/types.py",
       "symbol": "_NumberRangeBase.convert",
       "old": "            operator.le if self.min_open else operator.lt",
       "new": "            operator.lt if self.min_open else operator.le",
       "tests": ["tests/test_types.py::test_range"],
-      "problem": "`click.IntRange` and `click.FloatRange` reject their own minimum. `click.IntRange(5)` fails on the value `5` with `5 is not in the range x>=5.`, and with `min_open=True` the minimum itself is wrongly accepted. The maximum bound works correctly."
+      "problem": "`click.IntRange` and `click.FloatRange` reject their own minimum. `click.IntRange(5)` fails on the value `5` with `5 is not in the range x>=5.`, and with `min_open=True` the minimum itself is wrongly accepted. The maximum bound works correctly. The range types are defined in `src/click/types.py`."
     },
     {
       "id": "ck_eager_order",
       "repo": "click",
+      "kind": "call_graph",
       "file": "src/click/core.py",
       "symbol": "iter_params_for_processing",
+      "entry": "Command.parse_args",
       "old": "        return not item.is_eager, idx",
       "new": "        return item.is_eager, idx",
       "tests": ["tests/test_commands.py::test_iter_params_for_processing"],
-      "problem": "Click no longer processes eager parameters first. Options declared with `is_eager=True` (such as `--version` and `--help`) must be handled before all other parameters, but their callbacks now run after the normal ones. For example, a command with a required option reports the missing option instead of printing the version for `cli --version`."
+      "problem": "Click no longer processes eager parameters first. Options declared with `is_eager=True` (such as `--version` and `--help`) must be handled before all other parameters, but their callbacks now run after the normal ones. For example, a command with a required option reports the missing option instead of printing the version for `cli --version`. `Command.parse_args` in `src/click/core.py` processes the parameters in the order it gets from a helper function; that order is wrong."
     },
     {
       "id": "ck_envvar_nargs",
       "repo": "click",
+      "kind": "direct",
       "file": "src/click/core.py",
       "symbol": "Parameter.value_from_envvar",
       "old": "        if rv is not None and self.nargs != 1:\n            return self.type.split_envvar_value(rv)",
       "new": "        if rv is not None and self.nargs > 1:\n            return self.type.split_envvar_value(rv)",
       "tests": ["tests/test_arguments.py::test_nargs_envvar"],
-      "problem": "A Click argument with `nargs=-1` no longer splits its environment variable. With `@click.argument(\"arg\", envvar=\"X\", nargs=-1)` and `X=\"a b c\"`, `arg` should be `(\"a\", \"b\", \"c\")`, but the value is not split into separate items. Options with `nargs=2` read from an envvar still work."
+      "problem": "A Click argument with `nargs=-1` no longer splits its environment variable. With `@click.argument(\"arg\", envvar=\"X\", nargs=-1)` and `X=\"a b c\"`, `arg` should be `(\"a\", \"b\", \"c\")`, but the value is not split into separate items. Options with `nargs=2` read from an envvar still work. Parameters read environment variables in `src/click/core.py`."
     },
     {
       "id": "ck_help_columns",
       "repo": "click",
+      "kind": "call_graph",
       "file": "src/click/formatting.py",
-      "symbol": "HelpFormatter.write_dl",
-      "old": "            if term_len(first) <= first_col - col_spacing:",
-      "new": "            if term_len(first) < first_col - col_spacing:",
+      "symbol": "measure_table",
+      "entry": "HelpFormatter.write_dl",
+      "old": "            widths[idx] = max(widths.get(idx, 0), term_len(col))",
+      "new": "            widths[idx] = term_len(col)",
       "tests": ["tests/test_formatting.py"],
-      "problem": "In Click's `--help` output, the description of the longest option or command name is printed on the next line instead of next to the name. Shorter names in the same list are aligned correctly, so the help text looks broken for every command."
+      "problem": "Click's `--help` output is misaligned. In the Options list, every option whose name is longer than the last entry in the list (usually `--help`) gets its description on the next line instead of next to the name, even when it would fit in the first column. `HelpFormatter.write_dl` in `src/click/formatting.py` writes these lists; its own loop looks right, but the column widths it uses come from a helper function it calls."
     }
   ]
 }

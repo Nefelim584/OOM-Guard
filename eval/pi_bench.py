@@ -4,11 +4,11 @@
 For each task (a bug injected into a pinned release of more-itertools or click) and each mode
 (plain Pi, or Pi + ACC-MCP):
 
-    python3 eval/pi_bench.py prepare mi_difference --mode plain
+    python3 eval/pi_bench.py prepare mi_split_at --mode plain
         -> builds the broken repo, writes start.sh (opens interactive Pi) and prompt.txt
-    bash eval/work/runs/<run>/plain/mi_difference/start.sh
+    bash eval/work/runs/<run>/plain/mi_split_at/start.sh
         -> you paste prompt.txt into Pi, watch the model work, quit Pi when it is done
-    python3 eval/pi_bench.py collect mi_difference --mode plain --notes "what you saw"
+    python3 eval/pi_bench.py collect mi_split_at --mode plain --notes "what you saw"
         -> reads Pi's session file (tokens per model call, tools, compactions, time), measures
            navigation (code-reading calls and tokens, wasted and large reads, calls before the
            first edit of the target function, silent escalations in acc mode) and the ACC-MCP
@@ -33,6 +33,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import tomllib
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
@@ -51,11 +52,15 @@ BASELINE_DIR = WORK_DIR / "baseline"
 RUNS_DIR = WORK_DIR / "runs"
 
 MODES = ("plain", "acc")
-DEFAULT_RUN_ID = "run1"
+DEFAULT_RUN_ID = "bench1"  # "run1" holds the pilot session, which is not part of the results
 DEFAULT_ENDPOINT = "http://127.0.0.1:8080"
 PROVIDER = "local-llama"
 MODEL_ID = "qwen3.5-4b"
-DEFAULT_SESSION_BUDGET = 6000
+# One context window everywhere (Phase 25): the per-slot n_ctx llama-server reports in /props,
+# 30,208 on the reference machine. ACC-MCP's session budget is a fixed share of it.
+REFERENCE_CONTEXT_WINDOW = 30208
+SESSION_BUDGET_SHARE = 0.2
+DEFAULT_SESSION_BUDGET = round(REFERENCE_CONTEXT_WINDOW * SESSION_BUDGET_SHARE)  # 6,042
 NOT_SERVED_MARKER = "# [ACC-MCP] Not served"
 COPY_IGNORE = shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", ".tox", ".mypy_cache")
 
@@ -203,12 +208,19 @@ def baseline_failures(repo_name: str) -> set[str]:
 
 
 def query_context_window(endpoint: str = DEFAULT_ENDPOINT) -> int:
-    """Per-slot context size of the running llama-server (falls back to 8192)."""
+    """Per-slot context size of the running llama-server (falls back to REFERENCE_CONTEXT_WINDOW)."""
     try:
         with urllib.request.urlopen(f"{endpoint}/props", timeout=5) as resp:
             return int(json.load(resp)["default_generation_settings"]["n_ctx"])
     except Exception:
-        return 8192
+        print(f"[warning] llama-server /props not reachable at {endpoint}; "
+              f"assuming the reference window of {REFERENCE_CONTEXT_WINDOW} tokens")
+        return REFERENCE_CONTEXT_WINDOW
+
+
+def session_budget_for(context_window: int) -> int:
+    """ACC-MCP session budget as SESSION_BUDGET_SHARE of the model's context window."""
+    return round(context_window * SESSION_BUDGET_SHARE)
 
 
 def write_agent_dir(
@@ -806,8 +818,36 @@ def cmd_setup(args: argparse.Namespace) -> int:
         print(f"[setup] creating test venv at {VENV_DIR}")
         subprocess.run(["uv", "venv", "-q", "--python", "3.12", str(VENV_DIR)], check=True)
     subprocess.run(["uv", "pip", "install", "-q", "--python", str(VENV_DIR / "bin" / "python"), "pytest"], check=True)
+    for name, repo in data["repos"].items():
+        if repo.get("pythonpath"):
+            stub = write_metadata_stub(REPOS_DIR / name)
+            print(f"[setup] {name}: metadata-only {stub.name if stub else 'stub NOT written (no static name/version)'}")
     print("[setup] done. Next: python3 eval/pi_bench.py validate")
     return 0
+
+
+def write_metadata_stub(repo_dir: Path) -> Path | None:
+    """Metadata-only `<name>-<version>.dist-info` for a src-layout repo, in the test venv.
+
+    Such a repo is imported through PYTHONPATH, not installed, so
+    `importlib.metadata.version("click")` raises PackageNotFoundError; click's
+    tests/test_deprecations.py calls it while pytest collects, which aborted the whole
+    clean suite (0 tests passed). The stub has no code, so the package is still imported
+    only from the workspace: a fix the agent makes is what the tests run.
+    """
+    pyproject = repo_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return None
+    project = tomllib.loads(pyproject.read_text(encoding="utf-8")).get("project", {})
+    name, version = project.get("name"), project.get("version")
+    site = next(VENV_DIR.glob("lib/python*/site-packages"), None)
+    if not name or not version or site is None:
+        return None
+    dist = site / f"{name.replace('-', '_')}-{version}.dist-info"
+    dist.mkdir(exist_ok=True)
+    (dist / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n", encoding="utf-8")
+    (dist / "INSTALLER").write_text("pi_bench (metadata only, no code)\n", encoding="utf-8")
+    return dist
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -821,6 +861,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
         full = run_pytest(ws, [repo["test_dir"]], tool_env(repo, ws), scratch / f"{name}.xml")
         (BASELINE_DIR / f"{name}.json").write_text(json.dumps({"passed": full.passed, "failed_ids": full.failed_ids}, indent=2), encoding="utf-8")
         print(f"[validate] {name}: clean suite {full.passed} passed, {full.failed} failed (baseline)")
+        if full.passed == 0:
+            # A collection error or a broken environment; the "no new failures" check would be empty
+            ok = False
+            print(f"[validate] {name}: INVALID - the clean suite passed 0 tests: {full.failed_ids[:3]}")
     for task in data["tasks"]:
         repo = data["repos"][task["repo"]]
         clean = make_workspace(REPOS_DIR / task["repo"], scratch / task["id"] / "clean", None)
@@ -877,8 +921,9 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
     workspace = make_workspace(REPOS_DIR / task["repo"], out_dir / "workspace", task)
     context_window = query_context_window(args.endpoint)
+    session_budget = args.session_budget or session_budget_for(context_window)
     write_agent_dir(out_dir / "pi-agent", args.mode, workspace, out_dir / "acc_ledger.json",
-                    context_window, args.endpoint, args.session_budget)
+                    context_window, args.endpoint, session_budget)
     (out_dir / "sessions").mkdir()
     hint = args.mode == "acc" and not args.no_hint
     script = out_dir / "start.sh"
@@ -888,7 +933,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     (out_dir / "prompt.txt").write_text(prompt + "\n", encoding="utf-8")
     (out_dir / "run.json").write_text(json.dumps({
         "task": task["id"], "repo": task["repo"], "mode": args.mode, "hint": hint,
-        "context_window": context_window, "session_budget": args.session_budget if args.mode == "acc" else None,
+        "context_window": context_window, "session_budget": session_budget if args.mode == "acc" else None,
         "prepared_at": datetime.now().isoformat(timespec="seconds"),
     }, indent=2), encoding="utf-8")
 
@@ -1045,7 +1090,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--mode", choices=MODES, required=True)
         p.add_argument("--run-id", default=DEFAULT_RUN_ID)
         if name == "prepare":
-            p.add_argument("--session-budget", type=int, default=DEFAULT_SESSION_BUDGET)
+            p.add_argument("--session-budget", type=int, default=None,
+                           help=f"ACC-MCP tokens per session (default: {SESSION_BUDGET_SHARE:.0%} of the context window)")
             p.add_argument("--no-hint", action="store_true", help="acc mode without the usage hint")
             p.add_argument("--force", action="store_true", help="start this task over")
         else:

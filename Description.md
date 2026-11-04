@@ -7,7 +7,7 @@
 
 ## 1. Executive Summary & Motivation
 
-Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project assumes 8,192 tokens). When coding agents handle multi-file codebases, they often read entire files into that window. This creates two problems:
+Small local models such as **Qwen3.5-4B** run with a small context window on a laptop (this project uses 30,208 tokens, the per-slot window `llama-server` reports on the reference machine). When coding agents handle multi-file codebases, they often read entire files into that window. This creates two problems:
 1. **Context Bloat:** a full window leaves less room for the task, and an overfull request fails outright.
 2. **Token Waste:** many questions (verifying a function signature, finding call sites, checking return types) need only the interface, not the function bodies.
 
@@ -132,13 +132,14 @@ $$\text{Savings (\%)} = \frac{\text{Tokens}_{\text{Full File}} - \text{Tokens}_{
 ### Block 9: A Measured Comparison
 * **Implementation:** Our own bug-fix benchmark run through the Pi coding agent (method in `eval/PROTOCOL.md`, runner `eval/pi_bench.py`). SWE-bench was ruled out because its grader needs a multi-GB Docker image per task; small exercise sets were ruled out because their single small files leave nothing for ACC-MCP to save.
 * **Repositories and tasks:** 10 tasks, each a one-line bug injected into one function of a pinned release of a popular pure-Python library (the SWE-smith approach), graded by that library's own tests:
-  * **more-itertools `v11.2.1`** (https://github.com/more-itertools/more-itertools): 5 tasks in `more_itertools/more.py` (5,644 lines, ~45K tokens, larger than the model's context window): `split_at`, `numeric_range.index`, `difference`, `is_sorted`, `constrained_batches`.
+  * **more-itertools `v11.2.1`** (https://github.com/more-itertools/more-itertools): 4 tasks in `more_itertools/more.py` (5,644 lines, ~45K tokens, larger than the model's 30,208-token window) and 1 in `recipes.py`: `split_at`, `numeric_range.index`, `sliding_window`, `is_sorted`, `constrained_batches`.
   * **click `8.5.0`** (https://github.com/pallets/click): 5 tasks across `core.py` (3,799 lines), `types.py`, `parser.py`, `formatting.py`: argument unpacking, `IntRange` minimum, eager-parameter order, `nargs=-1` envvar splitting, `--help` column layout.
+  * 6 tasks are **direct** (the report points at the buggy function); 4 are **call-graph** tasks (`sliding_window`, argument unpacking, eager order, `--help` columns), where the report names a function whose helper has the bug, so Tier 2 (callees) can matter.
 * **Comparison:** every task is done twice by hand in interactive Pi (the operator pastes the bug report and follows fixed rules: no hints, only "Proceed as you think best." / "Continue."), with the same model, prompt, tools, settings and time limit; measurements come from Pi's own session file:
   * **Baseline:** Plain Pi with Qwen3.5-4B.
   * **Gated:** Pi with Qwen3.5-4B and ACC-MCP (plus one sentence telling the model to prefer it for reading code).
 * **Grading:** the agent sees only a user-style bug report. After its run the original tests are restored; the task is resolved when the target tests pass and the full suite has no new failures.
-* **Reported Metrics:** resolved or not, peak context of one model call, total prompt tokens, model calls, tools used, tiers served, and how often the agent escalated with `min_tier`.
+* **Reported Metrics:** resolved or not; navigation calls before the first edit of the target function and code-reading tokens, measured against the agent's own `grep` + windowed `read` strategy; wasted and large reads; peak context of one model call, total prompt tokens, model calls, tools used; tiers served, and explicit (`min_tier`) and silent escalations. Hypotheses H1-H3 are in `eval/PROTOCOL.md` section 1; the pilot session is excluded from the results.
 * **Where:** results go to `eval/results.md`. These runs have not been done yet.
 
 ---
